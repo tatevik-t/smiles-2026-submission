@@ -1,0 +1,573 @@
+{
+  "rows": [
+    {
+      "run": "agg-last-token-acc-thresh",
+      "strategy": "single",
+      "seed": 42,
+      "meas_test_acc": 0.7403846153846154,
+      "norm_test_acc": 0.7403846153846154,
+      "meas_test_auroc": 0.7516570923552806,
+      "norm_test_auroc": 0.7516570923552806,
+      "mean_trust": 47.497835908503426,
+      "per_fold_trust": [
+        47.497835908503426
+      ]
+    },
+    {
+      "run": "geom-features-l2-acc-thresh",
+      "strategy": "single",
+      "seed": 42,
+      "meas_test_acc": 0.7403846153846154,
+      "norm_test_acc": 0.7403846153846154,
+      "meas_test_auroc": 0.7096774193548385,
+      "norm_test_auroc": 0.7096774193548385,
+      "mean_trust": 47.497835908503426,
+      "per_fold_trust": [
+        47.497835908503426
+      ]
+    },
+    {
+      "run": "ppl-last-token",
+      "strategy": "single",
+      "seed": 42,
+      "meas_test_acc": 0.7403846153846154,
+      "norm_test_acc": 0.7403846153846154,
+      "meas_test_auroc": 0.7401679186920018,
+      "norm_test_auroc": 0.7401679186920018,
+      "mean_trust": 47.497835908503426,
+      "per_fold_trust": [
+        47.497835908503426
+      ]
+    },
+    {
+      "run": "probe-mlp-l2-acc-thresh",
+      "strategy": "single",
+      "seed": 42,
+      "meas_test_acc": 0.7403846153846154,
+      "norm_test_acc": 0.7403846153846154,
+      "meas_test_auroc": 0.7516570923552807,
+      "norm_test_auroc": 0.7516570923552807,
+      "mean_trust": 47.497835908503426,
+      "per_fold_trust": [
+        47.497835908503426
+      ]
+    },
+    {
+      "run": "seed-4-acc-thresh",
+      "strategy": "single",
+      "seed": 4,
+      "meas_test_acc": 0.7403846153846154,
+      "norm_test_acc": 0.7403846153846154,
+      "meas_test_auroc": 0.7640300486080422,
+      "norm_test_auroc": 0.7640300486080422,
+      "mean_trust": 29.870912412841633,
+      "per_fold_trust": [
+        29.870912412841633
+      ]
+    },
+    {
+      "run": "text-response-only",
+      "strategy": "single",
+      "seed": 42,
+      "meas_test_acc": 0.7403846153846154,
+      "norm_test_acc": 0.7403846153846154,
+      "meas_test_auroc": 0.5408749447635881,
+      "norm_test_auroc": 0.5408749447635881,
+      "mean_trust": 47.497835908503426,
+      "per_fold_trust": [
+        47.497835908503426
+      ]
+    },
+    {
+      "run": "xgb-all-features-5fold",
+      "strategy": "5fold",
+      "seed": 42,
+      "meas_test_acc": 0.7416693113297366,
+      "norm_test_acc": 0.7360530158964179,
+      "meas_test_auroc": 0.746985955454179,
+      "norm_test_auroc": 0.7439865931518939,
+      "mean_trust": 52.527077557443434,
+      "per_fold_trust": [
+        30.425623894674757,
+        30.825403145530515,
+        47.04831358249781,
+        100.0,
+        54.33604716451405
+      ]
+    },
+    {
+      "run": "attn-last-token",
+      "strategy": "single",
+      "seed": 42,
+      "meas_test_acc": 0.7307692307692307,
+      "norm_test_acc": 0.7307692307692307,
+      "meas_test_auroc": 0.7518780380026514,
+      "norm_test_auroc": 0.7518780380026514,
+      "mean_trust": 47.497835908503426,
+      "per_fold_trust": [
+        47.497835908503426
+      ]
+    },
+    {
+      "run": "heur-last-token",
+      "strategy": "single",
+      "seed": 42,
+      "meas_test_acc": 0.7307692307692307,
+      "norm_test_acc": 0.7307692307692307,
+      "meas_test_auroc": 0.741714538223597,
+      "norm_test_auroc": 0.741714538223597,
+      "mean_trust": 47.497835908503426,
+      "per_fold_trust": [
+        47.497835908503426
+      ]
+    },
+    {
+      "run": "agg-last4-layers-acc-thresh",
+      "strategy": "single",
+      "seed": 42,
+      "meas_test_acc": 0.7211538461538461,
+      "norm_test_acc": 0.7211538461538461,
+      "meas_test_auroc": 0.7326557666813964,
+      "norm_test_auroc": 0.7326557666813964,
+      "mean_trust": 47.497835908503426,
+      "per_fold_trust": [
+        47.497835908503426
+      ]
+    },
+    {
+      "run": "attn-last-5fold",
+      "strategy": "5fold",
+      "seed": 42,
+      "meas_test_acc": 0.7140907648365599,
+      "norm_test_acc": 0.719251774966654,
+      "meas_test_auroc": 0.7286929232970533,
+      "norm_test_auroc": 0.7197590451032663,
+      "mean_trust": 52.527077557443434,
+      "per_fold_trust": [
+        30.425623894674757,
+        30.825403145530515,
+        47.04831358249781,
+        100.0,
+        54.33604716451405
+      ]
+    },
+    {
+      "run": "ppl-last-5fold",
+      "strategy": "5fold",
+      "seed": 42,
+      "meas_test_acc": 0.7140378715751614,
+      "norm_test_acc": 0.7173594866919604,
+      "meas_test_auroc": 0.7336092564487869,
+      "norm_test_auroc": 0.724275930713008,
+      "mean_trust": 52.527077557443434,
+      "per_fold_trust": [
+        30.425623894674757,
+        30.825403145530515,
+        47.04831358249781,
+        100.0,
+        54.33604716451405
+      ]
+    },
+    {
+      "run": "split-5fold",
+      "strategy": "5fold",
+      "seed": 42,
+      "meas_test_acc": 0.7083042420395642,
+      "norm_test_acc": 0.7148040377655243,
+      "meas_test_auroc": 0.7314661735534881,
+      "norm_test_auroc": 0.7220921458749162,
+      "mean_trust": 52.527077557443434,
+      "per_fold_trust": [
+        30.425623894674757,
+        30.825403145530515,
+        47.04831358249781,
+        100.0,
+        54.33604716451405
+      ]
+    },
+    {
+      "run": "all-features-5fold",
+      "strategy": "5fold",
+      "seed": 42,
+      "meas_test_acc": 0.7125568602560033,
+      "norm_test_acc": 0.7130801456378052,
+      "meas_test_auroc": 0.7443490297384564,
+      "norm_test_auroc": 0.7387176619647192,
+      "mean_trust": 52.527077557443434,
+      "per_fold_trust": [
+        30.425623894674757,
+        30.825403145530515,
+        47.04831358249781,
+        100.0,
+        54.33604716451405
+      ]
+    },
+    {
+      "run": "seed-1-acc-thresh",
+      "strategy": "single",
+      "seed": 1,
+      "meas_test_acc": 0.7115384615384616,
+      "norm_test_acc": 0.7115384615384616,
+      "meas_test_auroc": 0.6663720724701723,
+      "norm_test_auroc": 0.6663720724701723,
+      "mean_trust": 36.119136503814296,
+      "per_fold_trust": [
+        36.119136503814296
+      ]
+    },
+    {
+      "run": "agg-last-token",
+      "strategy": "single",
+      "seed": 42,
+      "meas_test_acc": 0.7019230769230769,
+      "norm_test_acc": 0.7019230769230769,
+      "meas_test_auroc": 0.7401679186920017,
+      "norm_test_auroc": 0.7401679186920017,
+      "mean_trust": 47.497835908503426,
+      "per_fold_trust": [
+        47.497835908503426
+      ]
+    },
+    {
+      "run": "agg-last4-layers",
+      "strategy": "single",
+      "seed": 42,
+      "meas_test_acc": 0.7019230769230769,
+      "norm_test_acc": 0.7019230769230769,
+      "meas_test_auroc": 0.7406098099867432,
+      "norm_test_auroc": 0.7406098099867432,
+      "mean_trust": 47.497835908503426,
+      "per_fold_trust": [
+        47.497835908503426
+      ]
+    },
+    {
+      "run": "agg-mean-pool",
+      "strategy": "single",
+      "seed": 42,
+      "meas_test_acc": 0.7019230769230769,
+      "norm_test_acc": 0.7019230769230769,
+      "meas_test_auroc": 0.5289438798055678,
+      "norm_test_auroc": 0.5289438798055678,
+      "mean_trust": 47.497835908503426,
+      "per_fold_trust": [
+        47.497835908503426
+      ]
+    },
+    {
+      "run": "agg-meanmaxlast",
+      "strategy": "single",
+      "seed": 42,
+      "meas_test_acc": 0.7019230769230769,
+      "norm_test_acc": 0.7019230769230769,
+      "meas_test_auroc": 0.5117101193106495,
+      "norm_test_auroc": 0.5117101193106495,
+      "mean_trust": 47.497835908503426,
+      "per_fold_trust": [
+        47.497835908503426
+      ]
+    },
+    {
+      "run": "layer-14-acc-thresh",
+      "strategy": "single",
+      "seed": 42,
+      "meas_test_acc": 0.7019230769230769,
+      "norm_test_acc": 0.7019230769230769,
+      "meas_test_auroc": 0.6197525408749448,
+      "norm_test_auroc": 0.6197525408749448,
+      "mean_trust": 47.497835908503426,
+      "per_fold_trust": [
+        47.497835908503426
+      ]
+    },
+    {
+      "run": "layer-16-acc-thresh",
+      "strategy": "single",
+      "seed": 42,
+      "meas_test_acc": 0.7019230769230769,
+      "norm_test_acc": 0.7019230769230769,
+      "meas_test_auroc": 0.6840477242598321,
+      "norm_test_auroc": 0.6840477242598321,
+      "mean_trust": 47.497835908503426,
+      "per_fold_trust": [
+        47.497835908503426
+      ]
+    },
+    {
+      "run": "probe-deep-mlp",
+      "strategy": "single",
+      "seed": 42,
+      "meas_test_acc": 0.7019230769230769,
+      "norm_test_acc": 0.7019230769230769,
+      "meas_test_auroc": 0.6699072028281043,
+      "norm_test_auroc": 0.6699072028281043,
+      "mean_trust": 47.497835908503426,
+      "per_fold_trust": [
+        47.497835908503426
+      ]
+    },
+    {
+      "run": "xgb-last-token",
+      "strategy": "single",
+      "seed": 42,
+      "meas_test_acc": 0.7019230769230769,
+      "norm_test_acc": 0.7019230769230769,
+      "meas_test_auroc": 0.6738842244807777,
+      "norm_test_auroc": 0.6738842244807777,
+      "mean_trust": 47.497835908503426,
+      "per_fold_trust": [
+        47.497835908503426
+      ]
+    },
+    {
+      "run": "xgb-last-5fold",
+      "strategy": "5fold",
+      "seed": 42,
+      "meas_test_acc": 0.7053422194012484,
+      "norm_test_acc": 0.6985778754724745,
+      "meas_test_auroc": 0.7193309820156375,
+      "norm_test_auroc": 0.7127052368553323,
+      "mean_trust": 52.527077557443434,
+      "per_fold_trust": [
+        30.425623894674757,
+        30.825403145530515,
+        47.04831358249781,
+        100.0,
+        54.33604716451405
+      ]
+    },
+    {
+      "run": "heur-last-5fold",
+      "strategy": "5fold",
+      "seed": 42,
+      "meas_test_acc": 0.6981169998942135,
+      "norm_test_acc": 0.6985665872189334,
+      "meas_test_auroc": 0.7257458935506145,
+      "norm_test_auroc": 0.7194680710499514,
+      "mean_trust": 52.527077557443434,
+      "per_fold_trust": [
+        30.425623894674757,
+        30.825403145530515,
+        47.04831358249781,
+        100.0,
+        54.33604716451405
+      ]
+    },
+    {
+      "run": "meanmaxlast-5fold",
+      "strategy": "5fold",
+      "seed": 42,
+      "meas_test_acc": 0.6995451179519729,
+      "norm_test_acc": 0.697073425877651,
+      "meas_test_auroc": 0.6525570642304361,
+      "norm_test_auroc": 0.643794720030245,
+      "mean_trust": 52.527077557443434,
+      "per_fold_trust": [
+        30.425623894674757,
+        30.825403145530515,
+        47.04831358249781,
+        100.0,
+        54.33604716451405
+      ]
+    },
+    {
+      "run": "agg-mean-pool-acc-thresh",
+      "strategy": "single",
+      "seed": 42,
+      "meas_test_acc": 0.6923076923076923,
+      "norm_test_acc": 0.6923076923076923,
+      "meas_test_auroc": 0.5271763146266019,
+      "norm_test_auroc": 0.5271763146266019,
+      "mean_trust": 47.497835908503426,
+      "per_fold_trust": [
+        47.497835908503426
+      ]
+    },
+    {
+      "run": "attn-meanmaxlast",
+      "strategy": "single",
+      "seed": 42,
+      "meas_test_acc": 0.6923076923076923,
+      "norm_test_acc": 0.6923076923076923,
+      "meas_test_auroc": 0.5033141847105611,
+      "norm_test_auroc": 0.5033141847105611,
+      "mean_trust": 47.497835908503426,
+      "per_fold_trust": [
+        47.497835908503426
+      ]
+    },
+    {
+      "run": "layer-20-acc-thresh",
+      "strategy": "single",
+      "seed": 42,
+      "meas_test_acc": 0.6923076923076923,
+      "norm_test_acc": 0.6923076923076923,
+      "meas_test_auroc": 0.730446310207689,
+      "norm_test_auroc": 0.730446310207689,
+      "mean_trust": 47.497835908503426,
+      "per_fold_trust": [
+        47.497835908503426
+      ]
+    },
+    {
+      "run": "probe-linear-l2-acc-thresh",
+      "strategy": "single",
+      "seed": 42,
+      "meas_test_acc": 0.6923076923076923,
+      "norm_test_acc": 0.6923076923076923,
+      "meas_test_auroc": 0.6800707026071586,
+      "norm_test_auroc": 0.6800707026071585,
+      "mean_trust": 47.497835908503426,
+      "per_fold_trust": [
+        47.497835908503426
+      ]
+    },
+    {
+      "run": "text-prompt-only",
+      "strategy": "single",
+      "seed": 42,
+      "meas_test_acc": 0.6923076923076923,
+      "norm_test_acc": 0.6923076923076923,
+      "meas_test_auroc": 0.5695978789217854,
+      "norm_test_auroc": 0.5695978789217854,
+      "mean_trust": 47.497835908503426,
+      "per_fold_trust": [
+        47.497835908503426
+      ]
+    },
+    {
+      "run": "seed-0-acc-thresh",
+      "strategy": "single",
+      "seed": 0,
+      "meas_test_acc": 0.6923076923076923,
+      "norm_test_acc": 0.6923076923076922,
+      "meas_test_auroc": 0.6920017675651791,
+      "norm_test_auroc": 0.6920017675651791,
+      "mean_trust": 27.300758592956658,
+      "per_fold_trust": [
+        27.300758592956658
+      ]
+    },
+    {
+      "run": "split-5fold-acc-thresh",
+      "strategy": "5fold",
+      "seed": 42,
+      "meas_test_acc": 0.6908812017348989,
+      "norm_test_acc": 0.6905497608466499,
+      "meas_test_auroc": 0.724338027736868,
+      "norm_test_auroc": 0.7159446423398605,
+      "mean_trust": 52.527077557443434,
+      "per_fold_trust": [
+        30.425623894674757,
+        30.825403145530515,
+        47.04831358249781,
+        100.0,
+        54.33604716451405
+      ]
+    },
+    {
+      "run": "geom-features-acc-thresh",
+      "strategy": "single",
+      "seed": 42,
+      "meas_test_acc": 0.6826923076923077,
+      "norm_test_acc": 0.6826923076923077,
+      "meas_test_auroc": 0.7158638974812197,
+      "norm_test_auroc": 0.7158638974812198,
+      "mean_trust": 47.497835908503426,
+      "per_fold_trust": [
+        47.497835908503426
+      ]
+    },
+    {
+      "run": "layer-08-acc-thresh",
+      "strategy": "single",
+      "seed": 42,
+      "meas_test_acc": 0.6826923076923077,
+      "norm_test_acc": 0.6826923076923077,
+      "meas_test_auroc": 0.6389748121961997,
+      "norm_test_auroc": 0.6389748121961997,
+      "mean_trust": 47.497835908503426,
+      "per_fold_trust": [
+        47.497835908503426
+      ]
+    },
+    {
+      "run": "layer-18-acc-thresh",
+      "strategy": "single",
+      "seed": 42,
+      "meas_test_acc": 0.6826923076923077,
+      "norm_test_acc": 0.6826923076923077,
+      "meas_test_auroc": 0.6961997348652232,
+      "norm_test_auroc": 0.6961997348652232,
+      "mean_trust": 47.497835908503426,
+      "per_fold_trust": [
+        47.497835908503426
+      ]
+    },
+    {
+      "run": "probe-deep-mlp-acc-thresh",
+      "strategy": "single",
+      "seed": 42,
+      "meas_test_acc": 0.6826923076923077,
+      "norm_test_acc": 0.6826923076923077,
+      "meas_test_auroc": 0.6858152894387981,
+      "norm_test_auroc": 0.6858152894387981,
+      "mean_trust": 47.497835908503426,
+      "per_fold_trust": [
+        47.497835908503426
+      ]
+    },
+    {
+      "run": "probe-linear-acc-thresh",
+      "strategy": "single",
+      "seed": 42,
+      "meas_test_acc": 0.6826923076923077,
+      "norm_test_acc": 0.6826923076923077,
+      "meas_test_auroc": 0.6628369421122404,
+      "norm_test_auroc": 0.6628369421122404,
+      "mean_trust": 47.497835908503426,
+      "per_fold_trust": [
+        47.497835908503426
+      ]
+    },
+    {
+      "run": "layer-12-acc-thresh",
+      "strategy": "single",
+      "seed": 42,
+      "meas_test_acc": 0.6730769230769231,
+      "norm_test_acc": 0.6730769230769231,
+      "meas_test_auroc": 0.6482545293857711,
+      "norm_test_auroc": 0.6482545293857711,
+      "mean_trust": 47.497835908503426,
+      "per_fold_trust": [
+        47.497835908503426
+      ]
+    },
+    {
+      "run": "seed-2-acc-thresh",
+      "strategy": "single",
+      "seed": 2,
+      "meas_test_acc": 0.6730769230769231,
+      "norm_test_acc": 0.673076923076923,
+      "meas_test_auroc": 0.6597437030490501,
+      "norm_test_auroc": 0.6597437030490501,
+      "mean_trust": 12.157747128669593,
+      "per_fold_trust": [
+        12.157747128669593
+      ]
+    },
+    {
+      "run": "seed-3-acc-thresh",
+      "strategy": "single",
+      "seed": 3,
+      "meas_test_acc": 0.6634615384615384,
+      "norm_test_acc": 0.6634615384615384,
+      "meas_test_auroc": 0.6924436588599204,
+      "norm_test_auroc": 0.6924436588599204,
+      "mean_trust": 100.0,
+      "per_fold_trust": [
+        100.0
+      ]
+    }
+  ]
+}

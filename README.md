@@ -1,8 +1,20 @@
-# 🔍 SMILES-2026 Hallucination Detection
+# 🔍 SMILES-2026 Hallucination Detection — Applicant Submission
 
 Detect whether a small language
 model's answer is *hallucinated* (fabricated) or *truthful* using the model's
 own internal representations (hidden states).
+
+> **Applicant: Tatevik Terhovhannisyan.** The full write-up of the final approach, every
+> phase tried (including failed attempts), and the contribution split between the applicant
+> and the Claude Code assistant is in [SOLUTION.md](SOLUTION.md). The rest of this README
+> documents the unchanged competition scaffolding plus our additions to it.
+>
+> **Headline result:** canonical `predictions.csv` is a majority-vote ensemble of 5
+> probes (1× XGBoost + 4× MLP variants); local 5-fold test_acc of the strongest
+> single well-calibrated component is **71.26%** (74.43% AUROC), best single component
+> (XGBoost+features) is **74.16%**. Expected leaderboard accuracy: **72-74%**.
+>
+> **All runs tracked on Weights & Biases:** [wandb.ai/tatevik-th/smiles-2026-hallucination](https://wandb.ai/tatevik-th/smiles-2026-hallucination?nw=nwusertatevikt)
 
 ## Overview
 
@@ -23,39 +35,57 @@ It fits comfortably on a free Google Colab T4 GPU.
 ```
 SMILES-HALLUCINATION-DETECTION/
 ├── data/
-│   ├── dataset.csv        # Labelled training data (prompt, response, label)
-│   └── test.csv           # Unlabelled competition test set
+│   ├── dataset.csv         # Labelled training data (prompt, response, label)
+│   └── test.csv            # Unlabelled competition test set
 │
-├── solution.py            # Main script - run to create a 
+├── solution.py             # Main script — extracts features, evaluates, writes predictions.csv
+├── predictions.csv         # 5-model majority-vote ensemble, the submitted file
+├── results.json            # 5-fold metrics from the best single well-calibrated config
+├── SOLUTION.md             # Full applicant write-up (approach, phases, ablations, attribution)
 │
-│   ── Files you implement ──────────────────────────────────────────────
-├── aggregation.py         # Layer selection, token pooling, geometric features
-├── probe.py               # HallucinationProbe — the binary classifier
-├── splitting.py           # Train / validation / test split strategy
+│   ── Editable competition files (modified by the applicant) ──────────
+├── aggregation.py          # Layer/token aggregation + geometric/attention/perplexity/heuristic feature extractors
+├── probe.py                # HallucinationProbe — supports MLP (torch) and XGBoost backends; accuracy-mode threshold tuner
+├── splitting.py            # Stratified single-split and 5-fold strategies; SPLIT_SEED env var
 │
-│   ── Fixed infrastructure (do not edit) ───────────────────────────────
-├── model.py               # Loads Qwen2.5-0.5B and exposes get_model_and_tokenizer()
-├── evaluate.py            # Evaluation loop, metrics, summary table, JSON output
+│   ── Fixed infrastructure (unchanged) ─────────────────────────────────
+├── model.py                # Loads Qwen2.5-0.5B with output_hidden_states=True
+├── evaluate.py             # Evaluation loop, metrics, summary table, JSON output
 │
-├── requirements.txt       # Python dependencies
+│   ── Applicant tooling (not part of the competition contract) ─────────
+├── run_sweep.sh            # Env-var sweep launcher with per-run archiving (ONLY=N,M, START=N, SUFFIX="..." selectors)
+├── compare_runs.py         # Cross-run leaderboard table (sort by test_acc / test_auroc / val_*)
+├── error_analysis.py       # Per-sample misclassification dump on the canonical 5-fold config
+├── embeddings_audit.py     # Distribution-shift check: dataset splits ↔ data/test.csv
+├── slice_similarity.py     # Per-fold test-slice similarity to data/test.csv (drives weighted_metrics.py)
+├── weighted_metrics.py     # Trust-weighted leaderboard estimates per run
+├── ensemble_predictions.py # Majority-vote ensemble across multiple predictions.csv files
+│
+├── logs/
+│   ├── runs/{run_name}/    # Per-run archive: results.json, predictions.csv, stdout.log
+│   └── audits/             # embeddings_audit.json, slice_similarity.json, error_analysis.json, weighted_metrics.json
+│
+├── requirements.txt        # Python dependencies (+ xgboost added for the tree-based probe family)
+├── wandb_utils.py          # Thin wandb integration used by solution.py
+├── .env / .env.example     # WANDB_API_KEY etc. (.env is git-ignored)
 └── LICENSE
 ```
 
 
 ## Quick Start
 
-### Google Colab
+### Reproduce the submission exactly
 
-Open the terminal in Colab and run:
+The submitted `predictions.csv` is a 5-probe ensemble. To regenerate it from scratch, see [SOLUTION.md § Reproduce the submission](SOLUTION.md#reproduce-the-submission). Single command if `xgboost` and dependencies are installed:
 
-```python
-git clone https://github.com/ahdr3w/SMILES-HALLUCINATION-DETECTION.git
-cd SMILES-HALLUCINATION-DETECTION
-pip install -r requirements.txt
-python solution.py
+```bash
+./run_sweep.sh    # full sweep with archiving; or
+ONLY="34,35,36,37" SUFFIX="" ./run_sweep.sh   # just the 5 ensemble inputs
+python ensemble_predictions.py --out predictions.csv
+cp logs/runs/all-features-5fold/results.json results.json
 ```
 
-### Local Setup
+### Run a single probe variant (the original competition pipeline)
 
 ```bash
 git clone https://github.com/ahdr3w/SMILES-HALLUCINATION-DETECTION.git
@@ -66,8 +96,29 @@ source .venv/bin/activate        # Linux / macOS
 # .venv\Scripts\activate.bat     # Windows
 
 pip install -r requirements.txt
-python solution.py
+python solution.py               # last_token + MLP + single stratified split + threshold-tuned final probe
 ```
+
+To skip wandb tracking on any invocation, prepend `WANDB_MODE=disabled`.
+
+### Hyperparameter knobs (env vars)
+
+Every sweepable setting is an env var read by `solution.py`, `aggregation.py`, `probe.py`, or `splitting.py`. Set on the command line to override defaults:
+
+| Env var | Default | Values |
+|---|---|---|
+| `AGG_STRATEGY` | `last_token` | `last_token`, `mean_pool`, `last4_concat`, `meanmaxlast` |
+| `AGG_LAYER` | `-1` | int in `[-25, 24]` — Qwen2.5-0.5B layer index (24 = final) |
+| `PROBE_ARCH` | `mlp_1h_256` | `mlp_1h_256`, `mlp_deep`, `linear` |
+| `PROBE_FAMILY` | `torch` | `torch`, `xgboost` |
+| `PROBE_WEIGHT_DECAY` | `0` | float L2 strength for Adam |
+| `SPLIT_STRATEGY` | `single` | `single`, `5fold` |
+| `SPLIT_SEED` | `42` | int |
+| `USE_GEOMETRIC` | `0` | `0`/`1` |
+| `USE_ATTENTION` | `0` | `0`/`1` (forces eager attention) |
+| `USE_PERPLEXITY` | `0` | `0`/`1` |
+| `USE_HEURISTIC` | `0` | `0`/`1` |
+| `TEXT_MODE` | `prompt_response` | `prompt_response`, `prompt_only`, `response_only` |
 
 ## Dataset
 

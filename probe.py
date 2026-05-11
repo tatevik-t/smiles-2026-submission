@@ -10,11 +10,22 @@ and their signatures must not change.
 
 from __future__ import annotations
 
+import os
+
 import numpy as np
 import torch
 import torch.nn as nn
-from sklearn.metrics import f1_score
+from sklearn.metrics import accuracy_score, f1_score
 from sklearn.preprocessing import StandardScaler
+
+import wandb_utils
+
+# Sweep knob. Valid values: "mlp_1h_256" (default), "mlp_deep", "linear".
+PROBE_ARCH = os.environ.get("PROBE_ARCH", "mlp_1h_256")
+# Optimizer L2 strength (Adam weight_decay). 0 = no regularization (current default).
+PROBE_WEIGHT_DECAY = float(os.environ.get("PROBE_WEIGHT_DECAY", "0"))
+# Backend family. "torch" (default, nn.Module MLP), "xgboost" (tree-based gradient boosting).
+PROBE_FAMILY = os.environ.get("PROBE_FAMILY", "torch")
 
 
 class HallucinationProbe(nn.Module):
@@ -25,15 +36,18 @@ class HallucinationProbe(nn.Module):
     built lazily in ``fit()`` once the feature dimension is known.
     """
 
+    # Class-level counter so each call to fit() (one per fold) gets its own
+    # wandb log key. Public signatures stay untouched.
+    _fit_calls: int = 0
+
     def __init__(self) -> None:
         super().__init__()
-        self._net: nn.Sequential | None = None  # built lazily in fit()
+        self._net: nn.Sequential | None = None  # torch backend, built lazily in fit()
+        self._sk_clf = None                      # sklearn / XGBoost backend
         self._scaler = StandardScaler()
         self._threshold: float = 0.5  # tuned by fit_hyperparameters()
+        self._fold_idx: int = 0  # set inside fit() the first time it runs
 
-    # ------------------------------------------------------------------
-    # STUDENT: Replace or extend the network definition below.
-    # ------------------------------------------------------------------
     def _build_network(self, input_dim: int) -> None:
         """Instantiate the network layers.
 
@@ -42,11 +56,26 @@ class HallucinationProbe(nn.Module):
         Args:
             input_dim: Feature vector dimensionality.
         """
-        self._net = nn.Sequential(
-            nn.Linear(input_dim, 256),
-            nn.ReLU(),
-            nn.Linear(256, 1),
-        )
+        if PROBE_ARCH == "linear":
+            self._net = nn.Linear(input_dim, 1)
+        elif PROBE_ARCH == "mlp_1h_256":
+            self._net = nn.Sequential(
+                nn.Linear(input_dim, 256),
+                nn.ReLU(),
+                nn.Linear(256, 1),
+            )
+        elif PROBE_ARCH == "mlp_deep":
+            self._net = nn.Sequential(
+                nn.Linear(input_dim, 512),
+                nn.ReLU(),
+                nn.Dropout(0.3),
+                nn.Linear(512, 256),
+                nn.ReLU(),
+                nn.Dropout(0.3),
+                nn.Linear(256, 1),
+            )
+        else:
+            raise ValueError(f"unknown PROBE_ARCH={PROBE_ARCH!r}")
 
     # ------------------------------------------------------------------
 
@@ -81,6 +110,33 @@ class HallucinationProbe(nn.Module):
         """
         X_scaled = self._scaler.fit_transform(X)
 
+        if PROBE_FAMILY == "xgboost":
+            import xgboost as xgb
+            # No scale_pos_weight: positives are the MAJORITY here (70%), so
+            # the textbook n_neg/n_pos<1 downweights them and produces highly
+            # skewed probability outputs that mis-calibrate the final-probe
+            # threshold tuner. Letting XGBoost learn the natural 70% prior
+            # gives threshold≈0.5 → roughly training-matching predictions.
+            self._sk_clf = xgb.XGBClassifier(
+                n_estimators=300,
+                max_depth=4,
+                learning_rate=0.05,
+                subsample=0.8,
+                colsample_bytree=0.8,
+                random_state=42,
+                eval_metric="logloss",
+                n_jobs=-1,
+            )
+            self._sk_clf.fit(X_scaled, y)
+            HallucinationProbe._fit_calls += 1
+            self._fold_idx = HallucinationProbe._fit_calls
+            if wandb_utils.is_active():
+                wandb_utils.log({
+                    f"probe/fold_{self._fold_idx}/xgb_n_estimators": 300,
+                    f"probe/fold_{self._fold_idx}/xgb_max_depth": 4,
+                })
+            return self
+
         self._build_network(X_scaled.shape[1])
 
         X_t = torch.from_numpy(X_scaled).float()
@@ -95,15 +151,41 @@ class HallucinationProbe(nn.Module):
         # ------------------------------------------------------------------
         # STUDENT: Replace or extend the training loop below.
         # ------------------------------------------------------------------
-        optimizer = torch.optim.Adam(self.parameters(), lr=1e-3)
+        n_epochs = 200
+        lr = 1e-3
+        optimizer = torch.optim.Adam(
+            self.parameters(), lr=lr, weight_decay=PROBE_WEIGHT_DECAY,
+        )
+
+        # Each call to fit() corresponds to one fold of CV. Increment the
+        # class-level counter so wandb gets a distinct curve per fold.
+        HallucinationProbe._fit_calls += 1
+        self._fold_idx = HallucinationProbe._fit_calls
+        log_prefix = f"probe/fold_{self._fold_idx}"
+
+        if wandb_utils.is_active():
+            wandb_utils.log(
+                {
+                    f"{log_prefix}/n_train": len(y),
+                    f"{log_prefix}/n_pos": int(n_pos),
+                    f"{log_prefix}/n_neg": int(n_neg),
+                    f"{log_prefix}/pos_weight": float(pos_weight.item()),
+                    f"{log_prefix}/input_dim": int(X_scaled.shape[1]),
+                    f"{log_prefix}/lr": lr,
+                    f"{log_prefix}/n_epochs": n_epochs,
+                }
+            )
 
         self.train()
-        for _ in range(200):
+        for epoch in range(n_epochs):
             optimizer.zero_grad()
             logits = self(X_t)
             loss = criterion(logits, y_t)
             loss.backward()
             optimizer.step()
+            if wandb_utils.is_active():
+                wandb_utils.log({f"{log_prefix}/train_loss": float(loss.item()),
+                                 f"{log_prefix}/epoch": epoch})
         # ------------------------------------------------------------------
 
         self.eval()
@@ -132,13 +214,23 @@ class HallucinationProbe(nn.Module):
         # Candidate thresholds: unique predicted probabilities plus a coarse grid.
         candidates = np.unique(np.concatenate([probs, np.linspace(0.0, 1.0, 101)]))
 
+        # Tune for *accuracy* (the competition's primary metric) and reject
+        # collapsed thresholds that predict only one class -- those produced
+        # baseline-equivalent test_acc in phase 1.
         best_threshold = 0.5
-        best_f1 = -1.0
+        best_score = -1.0
+        best_f1_at_best = -1.0
         for t in candidates:
             y_pred_t = (probs >= t).astype(int)
-            score = f1_score(y_val, y_pred_t, zero_division=0)
-            if score > best_f1:
-                best_f1 = score
+            n_pos = int(y_pred_t.sum())
+            if n_pos == 0 or n_pos == len(y_pred_t):
+                continue  # degenerate: skip thresholds that collapse to one class
+            score = accuracy_score(y_val, y_pred_t)
+            # Accuracy ties are common on small val sets -- break ties on F1.
+            f1_t = f1_score(y_val, y_pred_t, zero_division=0)
+            if score > best_score or (score == best_score and f1_t > best_f1_at_best):
+                best_score = score
+                best_f1_at_best = f1_t
                 best_threshold = float(t)
 
         self._threshold = best_threshold
@@ -170,6 +262,8 @@ class HallucinationProbe(nn.Module):
             Used to compute AUROC.
         """
         X_scaled = self._scaler.transform(X)
+        if self._sk_clf is not None:
+            return self._sk_clf.predict_proba(X_scaled)
         X_t = torch.from_numpy(X_scaled).float()
         with torch.no_grad():
             logits = self(X_t)

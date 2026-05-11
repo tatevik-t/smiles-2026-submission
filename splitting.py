@@ -16,9 +16,15 @@ Contract
 
 from __future__ import annotations
 
+import os
+
 import numpy as np
 import pandas as pd
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import StratifiedKFold, train_test_split
+
+# Sweep knob. Valid values: "single" (default), "5fold".
+SPLIT_STRATEGY = os.environ.get("SPLIT_STRATEGY", "single")
+SPLIT_SEED = int(os.environ.get("SPLIT_SEED", "42"))
 
 
 def split_data(
@@ -26,7 +32,7 @@ def split_data(
     df: pd.DataFrame | None = None,
     test_size: float = 0.15,
     val_size: float = 0.15,
-    random_state: int = 42,
+    random_state: int = SPLIT_SEED,
 ) -> list[tuple[np.ndarray, np.ndarray | None, np.ndarray]]:
     """Split dataset indices into train, validation, and test subsets.
 
@@ -53,18 +59,36 @@ def split_data(
 
     idx = np.arange(len(y))
 
-    idx_train_val, idx_test = train_test_split(
-        idx,
-        test_size=test_size,
-        random_state=random_state,
-        stratify=y,
-    )
-    relative_val = val_size / (1.0 - test_size)
-    idx_train, idx_val = train_test_split(
-        idx_train_val,
-        test_size=relative_val,
-        random_state=random_state,
-        stratify=y[idx_train_val],
-    )
-    return [(idx_train, idx_val, idx_test)]
+    if SPLIT_STRATEGY == "single":
+        idx_train_val, idx_test = train_test_split(
+            idx,
+            test_size=test_size,
+            random_state=random_state,
+            stratify=y,
+        )
+        relative_val = val_size / (1.0 - test_size)
+        idx_train, idx_val = train_test_split(
+            idx_train_val,
+            test_size=relative_val,
+            random_state=random_state,
+            stratify=y[idx_train_val],
+        )
+        return [(idx_train, idx_val, idx_test)]
+
+    if SPLIT_STRATEGY == "5fold":
+        # Stratified 5-fold; carve a val slice from each fold's train for
+        # threshold tuning via probe.fit_hyperparameters().
+        skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=random_state)
+        splits: list[tuple[np.ndarray, np.ndarray | None, np.ndarray]] = []
+        for tr_idx, te_idx in skf.split(idx, y):
+            idx_tr, idx_va = train_test_split(
+                tr_idx,
+                test_size=val_size / (1.0 - 1.0 / 5),
+                random_state=random_state,
+                stratify=y[tr_idx],
+            )
+            splits.append((idx_tr, idx_va, te_idx))
+        return splits
+
+    raise ValueError(f"unknown SPLIT_STRATEGY={SPLIT_STRATEGY!r}")
 

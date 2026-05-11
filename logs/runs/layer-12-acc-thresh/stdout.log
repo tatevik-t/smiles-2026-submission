@@ -1,0 +1,113 @@
+/home/tterhovhanni/Desktop/smiles/.venv/lib/python3.12/site-packages/torch/cuda/__init__.py:1061: UserWarning: Can't initialize NVML
+  raw_cnt = _raw_device_count_nvml()
+wandb: [wandb.login()] Loaded credentials for https://api.wandb.ai from WANDB_API_KEY.
+wandb: Currently logged in as: tatevik-t (tatevik-th) to https://api.wandb.ai. Use `wandb login --relogin` to force relogin
+wandb: WARNING Using a boolean value for 'reinit' is deprecated. Use 'return_previous' or 'finish_previous' instead.
+wandb: Tracking run with wandb version 0.26.1
+wandb: Run data is saved locally in /home/tterhovhanni/Desktop/smiles/repo/wandb/run-20260511_233943-hyqieqmy
+wandb: Run `wandb offline` to turn off syncing.
+wandb: Syncing run layer-12-acc-thresh
+wandb: ⭐️ View project at https://wandb.ai/tatevik-th/smiles-2026-hallucination
+wandb: 🚀 View run at https://wandb.ai/tatevik-th/smiles-2026-hallucination/runs/hyqieqmy
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+[transformers] The following generation flags are not valid and may be ignored: ['output_hidden_states']. Set `TRANSFORMERS_VERBOSITY=info` for more details.
+Device       : cuda
+Data         : ./data/dataset.csv
+Max length   : 512 tokens
+Geometric feats: False
+Loaded 689 samples  (483 hallucinated / 206 truthful)
+[wandb] loaded credentials from .env
+[wandb] run started: layer-12-acc-thresh  entity=tatevik-th  (https://wandb.ai/tatevik-th/smiles-2026-hallucination/runs/hyqieqmy)
+Columns : ['prompt', 'response', 'label']
+Rows    : 689
+Labels  : {0.0: np.int64(206), 1.0: np.int64(483)}
+
+── prompt (first 500 chars) ──────────────────────────────────
+<|im_start|>system
+You are a helpful assistant.<|im_end|>
+<|im_start|>user
+Given the context, answer the question in a single brief but complete sentence.
+
+This is the most common method of construction procurement and is well established and recognized. In this arrangement, the architect or engineer acts as the project coordinator. His or her role is to design the works, prepare the specifications and produce construction drawings, administer the contract, tender the works, and manage the works
+
+── response (first 300 chars) ───────────────────────────────
+An architect or engineer has a direct relationship with the subcontractor.<|endoftext|>
+
+── label : 1  (hallucinated)
+[Model] Loading 'Qwen/Qwen2.5-0.5B' ...
+Loading weights:   0%|          | 0/290 [00:00<?, ?it/s]Loading weights: 100%|██████████| 290/290 [00:00<00:00, 4083.97it/s]
+Extracting & aggregating:   0%|          | 0/173 [00:00<?, ?batch/s]Extracting & aggregating:   1%|          | 1/173 [00:00<00:52,  3.27batch/s]Extracting & aggregating:   2%|▏         | 3/173 [00:00<00:20,  8.22batch/s]Extracting & aggregating:   4%|▍         | 7/173 [00:00<00:09, 16.82batch/s]Extracting & aggregating:   6%|▋         | 11/173 [00:00<00:07, 22.35batch/s]Extracting & aggregating:   8%|▊         | 14/173 [00:00<00:06, 23.59batch/s]Extracting & aggregating:  10%|▉         | 17/173 [00:00<00:06, 24.76batch/s]Extracting & aggregating:  12%|█▏        | 20/173 [00:01<00:06, 22.91batch/s]Extracting & aggregating:  13%|█▎        | 23/173 [00:01<00:06, 22.80batch/s]Extracting & aggregating:  15%|█▌        | 26/173 [00:01<00:06, 23.67batch/s]Extracting & aggregating:  17%|█▋        | 29/173 [00:01<00:05, 24.07batch/s]Extracting & aggregating:  18%|█▊        | 32/173 [00:01<00:05, 24.93batch/s]Extracting & aggregating:  20%|██        | 35/173 [00:01<00:05, 25.94batch/s]Extracting & aggregating:  22%|██▏       | 38/173 [00:01<00:05, 24.36batch/s]Extracting & aggregating:  24%|██▍       | 42/173 [00:01<00:04, 26.60batch/s]Extracting & aggregating:  26%|██▌       | 45/173 [00:02<00:05, 23.71batch/s]Extracting & aggregating:  28%|██▊       | 48/173 [00:02<00:04, 25.18batch/s]Extracting & aggregating:  29%|██▉       | 51/173 [00:02<00:04, 24.94batch/s]Extracting & aggregating:  31%|███       | 54/173 [00:02<00:04, 25.39batch/s]Extracting & aggregating:  33%|███▎      | 57/173 [00:02<00:05, 23.01batch/s]Extracting & aggregating:  35%|███▍      | 60/173 [00:02<00:05, 20.98batch/s]Extracting & aggregating:  36%|███▋      | 63/173 [00:02<00:05, 20.07batch/s]Extracting & aggregating:  38%|███▊      | 66/173 [00:03<00:05, 20.49batch/s]Extracting & aggregating:  40%|███▉      | 69/173 [00:03<00:04, 22.04batch/s]Extracting & aggregating:  42%|████▏     | 72/173 [00:03<00:04, 21.98batch/s]Extracting & aggregating:  43%|████▎     | 75/173 [00:03<00:04, 22.91batch/s]Extracting & aggregating:  45%|████▌     | 78/173 [00:03<00:04, 21.74batch/s]Extracting & aggregating:  47%|████▋     | 81/173 [00:03<00:04, 21.45batch/s]Extracting & aggregating:  49%|████▊     | 84/173 [00:03<00:04, 21.95batch/s]Extracting & aggregating:  50%|█████     | 87/173 [00:03<00:03, 23.16batch/s]Extracting & aggregating:  52%|█████▏    | 90/173 [00:04<00:03, 23.09batch/s]Extracting & aggregating:  54%|█████▍    | 93/173 [00:04<00:03, 24.59batch/s]Extracting & aggregating:  55%|█████▌    | 96/173 [00:04<00:03, 25.30batch/s]Extracting & aggregating:  57%|█████▋    | 99/173 [00:04<00:03, 24.01batch/s]Extracting & aggregating:  59%|█████▉    | 102/173 [00:04<00:02, 25.48batch/s]Extracting & aggregating:  61%|██████    | 105/173 [00:04<00:02, 25.68batch/s]Extracting & aggregating:  63%|██████▎   | 109/173 [00:04<00:02, 28.20batch/s]Extracting & aggregating:  65%|██████▍   | 112/173 [00:04<00:02, 27.59batch/s]Extracting & aggregating:  66%|██████▋   | 115/173 [00:04<00:02, 27.62batch/s]Extracting & aggregating:  68%|██████▊   | 118/173 [00:05<00:02, 26.18batch/s]Extracting & aggregating:  70%|██████▉   | 121/173 [00:05<00:02, 23.67batch/s]Extracting & aggregating:  72%|███████▏  | 124/173 [00:05<00:02, 21.97batch/s]Extracting & aggregating:  73%|███████▎  | 127/173 [00:05<00:02, 21.82batch/s]Extracting & aggregating:  76%|███████▌  | 131/173 [00:05<00:01, 23.43batch/s]Extracting & aggregating:  77%|███████▋  | 134/173 [00:05<00:01, 24.39batch/s]Extracting & aggregating:  79%|███████▉  | 137/173 [00:05<00:01, 23.43batch/s]Extracting & aggregating:  81%|████████  | 140/173 [00:06<00:01, 22.12batch/s]Extracting & aggregating:  83%|████████▎ | 143/173 [00:06<00:01, 21.93batch/s]Extracting & aggregating:  84%|████████▍ | 146/173 [00:06<00:01, 23.44batch/s]Extracting & aggregating:  86%|████████▌ | 149/173 [00:06<00:00, 24.56batch/s]Extracting & aggregating:  88%|████████▊ | 152/173 [00:06<00:00, 24.66batch/s]Extracting & aggregating:  90%|████████▉ | 155/173 [00:06<00:00, 24.15batch/s]Extracting & aggregating:  91%|█████████▏| 158/173 [00:06<00:00, 23.28batch/s]Extracting & aggregating:  93%|█████████▎| 161/173 [00:06<00:00, 24.62batch/s]Extracting & aggregating:  95%|█████████▍| 164/173 [00:07<00:00, 23.20batch/s]Extracting & aggregating:  97%|█████████▋| 167/173 [00:07<00:00, 21.14batch/s]Extracting & aggregating:  98%|█████████▊| 170/173 [00:07<00:00, 22.95batch/s]Extracting & aggregating: 100%|██████████| 173/173 [00:07<00:00, 23.17batch/s]
+Done in 7.5 s  —  689 feature vectors extracted
+Feature matrix : (689, 896)  (feature_dim = 896)
+Geometric feats: False
+Splits : 1 fold(s)
+  Fold 1: train=481  val=104  test=104
+
+──────────────────────────────────────────────────
+  Fold 1/1  —  train=481  val=104  test=104
+──────────────────────────────────────────────────
+  Baseline  — Acc: 70.19%  F1: 82.49%
+  Probe train — Acc: 84.62%  F1: 90.11%  AUROC: 100.00%
+  Probe val  — Acc: 71.15%  F1: 82.95%  AUROC: 66.59%
+  Probe test — Acc: 67.31%  F1: 79.01%  AUROC: 64.83%
+
+============================================================
+ Hallucination Detection — Evaluation Summary
+============================================================
+  Checkpoint                           Accuracy      F1   AUROC
+------------------------------------------------------------
+  1. Majority-class baseline             70.19%  82.49%     N/A
+  2. Probe (train split)                 84.62%  90.11% 100.00%
+  3. Probe (val split)                   71.15%  82.95%  66.59%
+  4. Probe (test split)                  67.31%  79.01%  64.83%
+------------------------------------------------------------
+  Feature dim  : 896
+  Total samples: 689
+  Folds        : 1
+  Extract time : 7.5 s
+============================================================
+
+★  Primary metric — Test AUROC: 64.83%
+
+Results saved to 'results.json'
+Test set loaded: 100 samples
+Test extraction & aggregation:   0%|          | 0/25 [00:00<?, ?batch/s]Test extraction & aggregation:   8%|▊         | 2/25 [00:00<00:01, 16.06batch/s]Test extraction & aggregation:  16%|█▌        | 4/25 [00:00<00:01, 18.08batch/s]Test extraction & aggregation:  24%|██▍       | 6/25 [00:00<00:01, 18.62batch/s]Test extraction & aggregation:  36%|███▌      | 9/25 [00:00<00:00, 18.86batch/s]Test extraction & aggregation:  44%|████▍     | 11/25 [00:00<00:00, 18.93batch/s]Test extraction & aggregation:  52%|█████▏    | 13/25 [00:00<00:00, 19.24batch/s]Test extraction & aggregation:  60%|██████    | 15/25 [00:00<00:00, 19.29batch/s]Test extraction & aggregation:  72%|███████▏  | 18/25 [00:00<00:00, 21.64batch/s]Test extraction & aggregation:  84%|████████▍ | 21/25 [00:01<00:00, 21.46batch/s]Test extraction & aggregation:  96%|█████████▌| 24/25 [00:01<00:00, 22.53batch/s]Test extraction & aggregation: 100%|██████████| 25/25 [00:01<00:00, 20.40batch/s]
+wandb: updating run metadata; uploading history steps 0-204, summary, console lines 1-56; uploading artifact submission
+wandb: uploading history steps 0-204, summary, console lines 1-56; uploading artifact submission
+wandb: uploading history steps 0-204, summary, console lines 1-56
+wandb: uploading history steps 0-204, summary, console lines 1-56; uploading output.log; uploading wandb-summary.json; uploading config.yaml
+wandb: uploading history steps 0-204, summary, console lines 1-56
+wandb: uploading history steps 205-407, summary, console lines 56-58
+wandb: 
+wandb: Run history:
+wandb:      extract/feature_dim ▁
+wandb:       extract/n_features ▁
+wandb:   extract/sec_per_sample ▁
+wandb:           extract/time_s ▁
+wandb:      final_probe/n_train ▁
+wandb:        final_probe/n_val ▁
+wandb:    final_probe/threshold ▁
+wandb: fold_1/baseline_accuracy ▁
+wandb:       fold_1/baseline_f1 ▁
+wandb:            fold_1/n_test ▁
+wandb:                      +32 ...
+wandb: 
+wandb: Run summary:
+wandb: avg/baseline_accuracy 0.70192
+wandb:       avg/baseline_f1 0.82486
+wandb:     avg/test_accuracy 0.67308
+wandb:        avg/test_auroc 0.64825
+wandb:           avg/test_f1 0.79012
+wandb:    avg/train_accuracy 0.84615
+wandb:       avg/train_auroc 1
+wandb:          avg/train_f1 0.90107
+wandb:      avg/val_accuracy 0.71154
+wandb:         avg/val_auroc 0.66593
+wandb:                   +47 ...
+wandb: 
+wandb: 🚀 View run layer-12-acc-thresh at: https://wandb.ai/tatevik-th/smiles-2026-hallucination/runs/hyqieqmy
+wandb: ⭐️ View project at: https://wandb.ai/tatevik-th/smiles-2026-hallucination
+wandb: Synced 5 W&B file(s), 1 media file(s), 5 artifact file(s) and 0 other file(s)
+wandb: Find logs at: ./wandb/run-20260511_233943-hyqieqmy/logs
+Final probe: trained on 526 samples, threshold tuned on 59 (chosen threshold: 0.0091)
+Predictions saved to 'predictions.csv'  (100 samples)

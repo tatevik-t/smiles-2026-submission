@@ -38,6 +38,7 @@ Hallucination Detection in Small Language Models
 
 """
 
+import os
 import time
 
 import numpy as np
@@ -45,18 +46,41 @@ import pandas as pd
 import torch
 from tqdm import tqdm
 
-from aggregation import aggregation_and_feature_extraction
+import wandb_utils
+from aggregation import (
+    AGG_LAYER,
+    AGG_STRATEGY,
+    aggregation_and_feature_extraction,
+    extract_heuristic_features,
+    extract_perplexity_features,
+)
 from evaluate import print_summary, run_evaluation, save_predictions, save_results
-from model import MAX_LENGTH, get_model_and_tokenizer
-from probe import HallucinationProbe
-from splitting import split_data
+from model import MAX_LENGTH, _DEFAULT_MODEL, get_model_and_tokenizer
+from probe import PROBE_ARCH, PROBE_FAMILY, PROBE_WEIGHT_DECAY, HallucinationProbe
+from splitting import SPLIT_SEED, SPLIT_STRATEGY, split_data
 
 # ---------------------------------------------------------------------
 
 DATA_FILE     = "./data/dataset.csv"   # path to the dataset CSV
 OUTPUT_FILE   = "results.json"         # where to write the results summary
 BATCH_SIZE    = 4
-USE_GEOMETRIC = False                  # set True to enable geometric feature extraction
+USE_GEOMETRIC = os.environ.get("USE_GEOMETRIC", "0") == "1"  # toggle via env var
+USE_ATTENTION = os.environ.get("USE_ATTENTION", "0") == "1"  # if True, model outputs attention weights and we extract attention features
+USE_PERPLEXITY = os.environ.get("USE_PERPLEXITY", "0") == "1"  # if True, extract per-token NLL stats over the response span
+USE_HEURISTIC = os.environ.get("USE_HEURISTIC", "0") == "1"  # if True, append text-based heuristic features (length, hedge-words, etc.)
+# Sweep knob. "prompt_response" (default, fed to Qwen as the original solution did),
+# "prompt_only" (no model response — abstention-style probing), "response_only".
+TEXT_MODE = os.environ.get("TEXT_MODE", "prompt_response")
+
+
+def _build_text(row) -> str:
+    if TEXT_MODE == "prompt_response":
+        return f"{row['prompt']}{row['response']}"
+    if TEXT_MODE == "prompt_only":
+        return row["prompt"]
+    if TEXT_MODE == "response_only":
+        return row["response"]
+    raise ValueError(f"unknown TEXT_MODE={TEXT_MODE!r}")
 TEST_FILE        = "./data/test.csv"   # competition test set (labels are null)
 PREDICTIONS_FILE = "predictions.csv"   # output file with predicted labels
 
@@ -79,13 +103,50 @@ if __name__=='__main__':
 
     df = pd.read_csv(DATA_FILE)
 
-    # Build the text fed to the LLM: concatenation of prompt and response.
-    all_texts  = [f"{row['prompt']}{row['response']}" for _, row in df.iterrows()]
+    # Build the text fed to the LLM (TEXT_MODE controls prompt+response, prompt-only, etc.).
+    all_texts  = [_build_text(row) for _, row in df.iterrows()]
     all_labels = np.array([int(float(h)) for h in df["label"]])
 
     n_total = len(all_labels)
+    n_hallucinated = int(all_labels.sum())
+    n_truthful = int((all_labels == 0).sum())
     print(f"Loaded {n_total} samples  "
-        f"({all_labels.sum()} hallucinated / {(all_labels == 0).sum()} truthful)")
+        f"({n_hallucinated} hallucinated / {n_truthful} truthful)")
+
+    # ── wandb run init ────────────────────────────────────────────────────
+    # Captures all knobs the student is likely to sweep over. Add fields here
+    # if you introduce new hyperparameters in aggregation/probe/splitting.
+    gpu_names = (
+        [torch.cuda.get_device_name(i) for i in range(torch.cuda.device_count())]
+        if torch.cuda.is_available()
+        else []
+    )
+    wandb_utils.init_run(
+        config={
+            "model_name": _DEFAULT_MODEL,
+            "max_length": MAX_LENGTH,
+            "batch_size": BATCH_SIZE,
+            "use_geometric": USE_GEOMETRIC,
+            "device": str(device),
+            "gpu_count": torch.cuda.device_count() if torch.cuda.is_available() else 0,
+            "gpu_names": gpu_names,
+            "data_file": DATA_FILE,
+            "test_file": TEST_FILE,
+            "n_samples": int(n_total),
+            "n_hallucinated": n_hallucinated,
+            "n_truthful": n_truthful,
+            "class_balance_pos": float(n_hallucinated / max(n_total, 1)),
+            "agg_strategy": AGG_STRATEGY,
+            "agg_layer": AGG_LAYER,
+            "probe_arch": PROBE_ARCH,
+            "probe_weight_decay": PROBE_WEIGHT_DECAY,
+            "probe_family": PROBE_FAMILY,
+            "split_strategy": SPLIT_STRATEGY,
+            "split_seed": SPLIT_SEED,
+            "text_mode": TEXT_MODE,
+        },
+        tags=["geometric" if USE_GEOMETRIC else "no-geometric"],
+    )
     
     # Preview the raw data
     print(f"Columns : {df.columns.tolist()}")
@@ -105,11 +166,32 @@ if __name__=='__main__':
     print(f"── label : {int(row0['label'])}  ({label_str})")
 
 
-    # Load the LLM
+    # Load the LLM. If attention features are requested, reload with eager
+    # attention since SDPA doesn't support output_attentions=True.
     model, tokenizer = get_model_and_tokenizer()
+    if USE_ATTENTION:
+        from transformers import AutoModelForCausalLM as _AMLM
+        print("[Model] reloading with attn_implementation='eager' for USE_ATTENTION")
+        model = _AMLM.from_pretrained(
+            _DEFAULT_MODEL,
+            output_hidden_states=True,
+            torch_dtype=torch.bfloat16,
+            attn_implementation="eager",
+        )
+        model.eval()
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
     model.to(device)
+
+    # Precompute per-sample prompt token counts (needed by perplexity features
+    # to identify the response span). Cheap: O(N) short tokenizations.
+    if USE_PERPLEXITY:
+        prompt_token_counts = [
+            len(tokenizer.encode(r["prompt"], add_special_tokens=False))
+            for _, r in df.iterrows()
+        ]
+    else:
+        prompt_token_counts = [0] * len(all_texts)
 
     all_features: list = []
     t0 = time.time()
@@ -129,27 +211,39 @@ if __name__=='__main__':
         input_ids      = encoding["input_ids"].to(device)
         attention_mask = encoding["attention_mask"].to(device)
 
-        # ── 2. LLM forward pass ──────────────────────────────────────────────
-        # outputs.hidden_states: tuple of (n_layers+1) tensors,
-        # each with shape (batch, seq_len, hidden_dim).
-        # Index 0 → token embeddings; index k → transformer layer k.
         with torch.no_grad():
-            outputs = model(input_ids=input_ids, attention_mask=attention_mask)
+            outputs = model(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                output_attentions=USE_ATTENTION,
+            )
 
-        # ── 3. Stack all layers into one tensor, move to CPU ─────────────────
-        # Shape: (batch, n_layers, seq_len, hidden_dim)
         hidden = torch.stack(outputs.hidden_states, dim=1).float()
-        mask   = attention_mask.cpu()
+        # (batch, n_layers, n_heads, seq_len, seq_len) if attentions are requested.
+        attn = torch.stack(outputs.attentions, dim=1).float() if USE_ATTENTION else None
+        logits = outputs.logits.float() if USE_PERPLEXITY else None
+        mask = attention_mask.cpu()
 
-        # ── 4. Aggregate each sample and store the compact feature vector ─────
-        # The raw `hidden` tensor is released at the end of this loop iteration.
         for i in range(hidden.size(0)):
             feat = aggregation_and_feature_extraction(
-                hidden[i],   # (n_layers, seq_len, hidden_dim)
-                mask[i],     # (seq_len,)
+                hidden[i],
+                mask[i],
+                attentions=attn[i] if attn is not None else None,
                 use_geometric=USE_GEOMETRIC,
-            )
-            all_features.append(feat.cpu())
+            ).cpu()
+            if USE_PERPLEXITY:
+                ppl_feat = extract_perplexity_features(
+                    logits[i],
+                    input_ids[i],
+                    attention_mask[i].cpu(),
+                    prompt_token_counts[start + i],
+                ).cpu()
+                feat = torch.cat([feat, ppl_feat], dim=0)
+            if USE_HEURISTIC:
+                row = df.iloc[start + i]
+                heur_feat = extract_heuristic_features(row["prompt"], row["response"])
+                feat = torch.cat([feat, heur_feat], dim=0)
+            all_features.append(feat)
 
     extract_time = time.time() - t0
     print(f"Done in {extract_time:.1f} s  —  {len(all_features)} feature vectors extracted")
@@ -168,21 +262,75 @@ if __name__=='__main__':
         print(f"  Fold {i + 1}: train={len(tr)}  "
             f"val={len(va) if va is not None else 'N/A'}  test={len(te)}")
 
+    wandb_utils.log(
+        {
+            "extract/time_s": extract_time,
+            "extract/n_features": int(X.shape[0]),
+            "extract/feature_dim": int(X.shape[1]),
+            "extract/sec_per_sample": extract_time / max(len(all_features), 1),
+            "splits/n_folds": len(splits),
+        }
+    )
+
     fold_results = run_evaluation(splits, X, y, HallucinationProbe)
-    
+
+    # ── Per-fold metrics to wandb ────────────────────────────────────────
+    for r in fold_results:
+        fold = r["fold"]
+        scalar_metrics = {
+            f"fold_{fold}/{k}": v
+            for k, v in r.items()
+            if isinstance(v, (int, float)) and k != "fold"
+        }
+        wandb_utils.log(scalar_metrics)
+    wandb_utils.log_fold_table(fold_results)
+
     print_summary(fold_results, X.shape[1], len(X), extract_time)
     save_results(fold_results, X.shape[1], len(X), extract_time, OUTPUT_FILE)
+
+    # ── Averaged / summary metrics (these show up in the wandb runs table) ─
+    def _mean(key: str) -> float:
+        vals = [r[key] for r in fold_results if key in r and r[key] == r[key]]  # filter NaN
+        return float(np.mean(vals)) if vals else float("nan")
+
+    wandb_utils.update_summary(
+        {
+            "avg/baseline_accuracy": _mean("baseline_accuracy"),
+            "avg/baseline_f1": _mean("baseline_f1"),
+            "avg/train_accuracy": _mean("train_accuracy"),
+            "avg/train_f1": _mean("train_f1"),
+            "avg/train_auroc": _mean("train_auroc"),
+            "avg/val_accuracy": _mean("val_accuracy"),
+            "avg/val_f1": _mean("val_f1"),
+            "avg/val_auroc": _mean("val_auroc"),
+            "avg/test_accuracy": _mean("test_accuracy"),
+            "avg/test_f1": _mean("test_f1"),
+            "avg/test_auroc": _mean("test_auroc"),
+            "feature_dim": int(X.shape[1]),
+            "extract_time_s": extract_time,
+        }
+    )
 
     
 
     # ── Load test data ────────────────────────────────────────────────────────
     df_test    = pd.read_csv(TEST_FILE)
-    test_texts = [f"{row['prompt']}{row['response']}" for _, row in df_test.iterrows()]
+    test_texts = [_build_text(row) for _, row in df_test.iterrows()]
     test_ids   = df_test.index
     print(f"Test set loaded: {len(test_texts)} samples")
+    wandb_utils.log({"test/n_samples": len(test_texts)})
+    t_test0 = time.time()
 
     # ── Extract features for test set (same loop as Section 4) ───────────────
     test_features: list = []
+
+    if USE_PERPLEXITY:
+        test_prompt_token_counts = [
+            len(tokenizer.encode(r["prompt"], add_special_tokens=False))
+            for _, r in df_test.iterrows()
+        ]
+    else:
+        test_prompt_token_counts = [0] * len(test_texts)
 
     for start in tqdm(range(0, len(test_texts), BATCH_SIZE),
                     desc="Test extraction & aggregation", unit="batch"):
@@ -199,18 +347,41 @@ if __name__=='__main__':
         attention_mask = encoding["attention_mask"].to(device)
 
         with torch.no_grad():
-            outputs = model(input_ids=input_ids, attention_mask=attention_mask)
+            outputs = model(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                output_attentions=USE_ATTENTION,
+            )
 
         hidden = torch.stack(outputs.hidden_states, dim=1).float()
-        mask   = attention_mask.cpu()
+        attn = torch.stack(outputs.attentions, dim=1).float() if USE_ATTENTION else None
+        logits = outputs.logits.float() if USE_PERPLEXITY else None
+        mask = attention_mask.cpu()
 
         for i in range(hidden.size(0)):
             feat = aggregation_and_feature_extraction(
-                hidden[i], mask[i], use_geometric=USE_GEOMETRIC,
-            )
-            test_features.append(feat.cpu())
+                hidden[i],
+                mask[i],
+                attentions=attn[i] if attn is not None else None,
+                use_geometric=USE_GEOMETRIC,
+            ).cpu()
+            if USE_PERPLEXITY:
+                ppl_feat = extract_perplexity_features(
+                    logits[i],
+                    input_ids[i],
+                    attention_mask[i].cpu(),
+                    test_prompt_token_counts[start + i],
+                ).cpu()
+                feat = torch.cat([feat, ppl_feat], dim=0)
+            if USE_HEURISTIC:
+                row = df_test.iloc[start + i]
+                heur_feat = extract_heuristic_features(row["prompt"], row["response"])
+                feat = torch.cat([feat, heur_feat], dim=0)
+            test_features.append(feat)
 
     X_test = np.vstack([f.numpy() for f in test_features])  # (n_test, feature_dim)
+    test_extract_time = time.time() - t_test0
+    wandb_utils.log({"test/extract_time_s": test_extract_time})
 
     # ── Fit final probe on training + validation data only ──────────────────
     # Collect the union of all train and validation indices across every split.
@@ -220,9 +391,47 @@ if __name__=='__main__':
         np.concatenate([idx_tr, idx_va]) if idx_va is not None else idx_tr
         for idx_tr, idx_va, _ in splits
     ]))
+
+    # Hold out 10% of idx_non_test as a final-stage val set for threshold
+    # tuning of the submission probe. Without this, the final probe would use
+    # threshold=0.5 and ignore the accuracy-mode tuner we use in evaluation.
+    from sklearn.model_selection import train_test_split as _final_tts
+    idx_ft, idx_fv = _final_tts(
+        idx_non_test, test_size=0.10, random_state=SPLIT_SEED,
+        stratify=y[idx_non_test],
+    )
     final_probe = HallucinationProbe()
-    final_probe.fit(X[idx_non_test], y[idx_non_test])
+    final_probe.fit(X[idx_ft], y[idx_ft])
+    final_probe.fit_hyperparameters(X[idx_fv], y[idx_fv])
+    print(f"Final probe: trained on {len(idx_ft)} samples, "
+          f"threshold tuned on {len(idx_fv)} (chosen threshold: {final_probe._threshold:.4f})")
+    wandb_utils.log({
+        "final_probe/n_train": len(idx_ft),
+        "final_probe/n_val": len(idx_fv),
+        "final_probe/threshold": float(final_probe._threshold),
+    })
 
     # ── Predict and save ────────────────────────────────────────────────────
     save_predictions(final_probe, X_test, test_ids, PREDICTIONS_FILE)
+
+    # Log prediction distribution + persist artifacts to wandb (predictions
+    # are how the competition is scored, so keep a copy attached to the run).
+    try:
+        preds = pd.read_csv(PREDICTIONS_FILE)
+        wandb_utils.update_summary(
+            {
+                "predictions/n": int(len(preds)),
+                "predictions/frac_hallucinated": float(preds["label"].mean()),
+            }
+        )
+        if wandb_utils.is_active():
+            import wandb  # local import keeps the file importable without wandb
+            artifact = wandb.Artifact("submission", type="predictions")
+            artifact.add_file(PREDICTIONS_FILE)
+            artifact.add_file(OUTPUT_FILE)
+            wandb.run.log_artifact(artifact)
+    except Exception as exc:  # pragma: no cover -- artifact upload is best-effort
+        print(f"[wandb] failed to upload artifact: {exc}")
+
+    wandb_utils.finish_run()
 
