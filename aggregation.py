@@ -577,35 +577,83 @@ def compute_lid_features(X_train, X_query=None, leave_one_out: bool = False):
     return np.column_stack([mu, np.log(mu + 1e-12)])
 
 
-def compute_mahalanobis_features(X_train, y_train, X_query):
-    """Per-class Mahalanobis distance features.
+def compute_centroid_features(X_train, y_train, X_query=None, leave_one_out: bool = False):
+    """Per-class **centroid** distance features (LOO-correct, label-leakage-free).
 
-    Fits a multivariate Gaussian to each class on the training set; reports
-    the distance from each query point to each class's Gaussian, plus their
-    ratio and difference. **Note:** uses a shrunk covariance estimator to
-    keep the inversion stable in high dim.
+    Replaces the previous Mahalanobis path: that one fit a per-class Gaussian
+    on the full training set, including each query sample's own label,
+    producing severe label leakage when X_query ⊆ X_train. This implementation
+    uses simple Euclidean distance to the class centroid and applies LOO
+    correction on the relevant class when the query is a training sample.
+
+    Args:
+        X_train: (N_train, D) ndarray — neighbor pool.
+        y_train: (N_train,) int array (0=truthful, 1=hallucinated).
+        X_query: (N_query, D) — points to score. If None, defaults to X_train.
+        leave_one_out: if True, treats each query sample as if it were in
+                       X_train and removes its contribution to its own class
+                       centroid. Used when X_query is a subset of X_train.
 
     Returns:
         (N_query, 4) ndarray — [d_truthful, d_hallucinated, ratio, diff].
     """
     import numpy as np
-    from sklearn.covariance import LedoitWolf
 
-    def class_mahal(class_label: int):
-        Xc = X_train[y_train == class_label]
-        mu = Xc.mean(axis=0)
-        cov = LedoitWolf().fit(Xc).covariance_
-        try:
-            cov_inv = np.linalg.pinv(cov)
-        except np.linalg.LinAlgError:
-            cov_inv = np.linalg.pinv(cov + 1e-3 * np.eye(cov.shape[0]))
-        diff = X_query - mu
-        return np.sqrt(np.maximum((diff @ cov_inv * diff).sum(axis=1), 0.0))
+    if X_query is None:
+        X_query = X_train
+        leave_one_out = True
 
-    d_truthful = class_mahal(0)
-    d_hallucinated = class_mahal(1)
-    ratio = d_truthful / (d_hallucinated + 1e-12)
-    return np.column_stack([d_truthful, d_hallucinated, ratio, d_truthful - d_hallucinated])
+    # Full-training class centroids (used as-is when leave_one_out is False).
+    Xc0 = X_train[y_train == 0]
+    Xc1 = X_train[y_train == 1]
+    mu_0 = Xc0.mean(axis=0)
+    mu_1 = Xc1.mean(axis=0)
+    n_0 = max(len(Xc0), 1)
+    n_1 = max(len(Xc1), 1)
+
+    if not leave_one_out:
+        d_0 = np.linalg.norm(X_query - mu_0, axis=1)
+        d_1 = np.linalg.norm(X_query - mu_1, axis=1)
+    else:
+        # LOO: for each query sample i, if its label is c, the c-class centroid
+        # is recomputed without sample i. The other class is untouched.
+        # Closed form: mu_c_loo[i] = (n_c * mu_c - X_i) / (n_c - 1).
+        # NOTE: caller is responsible for X_query being row-aligned with y_train
+        #       when leave_one_out=True.
+        assert X_query.shape[0] == y_train.shape[0], (
+            "leave_one_out=True requires X_query to be the same set as X_train."
+        )
+        # For both classes, compute LOO centroid for samples in that class.
+        # We need vector ops, so split by label and merge back.
+        d_0 = np.zeros(X_query.shape[0], dtype=np.float32)
+        d_1 = np.zeros(X_query.shape[0], dtype=np.float32)
+
+        # Samples with label 0: LOO centroid for class 0, full centroid for class 1.
+        idx_0 = (y_train == 0)
+        if idx_0.sum() > 1:
+            mu_0_loo = (n_0 * mu_0[None, :] - X_query[idx_0]) / (n_0 - 1)
+            d_0[idx_0] = np.linalg.norm(X_query[idx_0] - mu_0_loo, axis=1)
+        else:
+            d_0[idx_0] = np.linalg.norm(X_query[idx_0] - mu_0, axis=1)
+        d_1[idx_0] = np.linalg.norm(X_query[idx_0] - mu_1, axis=1)
+
+        # Samples with label 1: full centroid for class 0, LOO centroid for class 1.
+        idx_1 = (y_train == 1)
+        d_0[idx_1] = np.linalg.norm(X_query[idx_1] - mu_0, axis=1)
+        if idx_1.sum() > 1:
+            mu_1_loo = (n_1 * mu_1[None, :] - X_query[idx_1]) / (n_1 - 1)
+            d_1[idx_1] = np.linalg.norm(X_query[idx_1] - mu_1_loo, axis=1)
+        else:
+            d_1[idx_1] = np.linalg.norm(X_query[idx_1] - mu_1, axis=1)
+
+    ratio = d_0 / (d_1 + 1e-12)
+    return np.column_stack([d_0, d_1, ratio, d_0 - d_1]).astype(np.float32)
+
+
+# Deprecated name kept for backward-compatibility import; redirects to the
+# leakage-free centroid path.
+def compute_mahalanobis_features(X_train, y_train, X_query=None, leave_one_out: bool = False):
+    return compute_centroid_features(X_train, y_train, X_query, leave_one_out=leave_one_out)
 
 
 def aggregation_and_feature_extraction(

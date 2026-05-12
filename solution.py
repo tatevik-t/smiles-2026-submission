@@ -53,7 +53,7 @@ from aggregation import (
     aggregation_and_feature_extraction,
     compute_knn_features,
     compute_lid_features,
-    compute_mahalanobis_features,
+    compute_centroid_features,
     extract_heuristic_features,
     extract_logit_lens_features,
     extract_per_head_attention_to_prompt,
@@ -305,12 +305,14 @@ if __name__=='__main__':
         print(f"KNN-OOD: appended {knn_train.shape[1]} features (train, LOO)")
 
     if USE_MANIFOLD:
-        # NOTE: Mahalanobis dropped — it has label leakage when X_query is in X_train
-        # (each sample's label was used to fit its own class's Gaussian). LID is
-        # label-free and stays. See SOLUTION.md "leakage and lessons" section.
+        # ONLY LID is included. Both Mahalanobis (label leakage) and centroid
+        # (transductive leakage even with sample-level LOO — centroids still
+        # encode fold-test labels via the OTHER training samples) are excluded.
+        # A CV-fold-aware centroid feature would require refactoring the
+        # evaluation loop to compute features per-fold; left as future work.
         lid_train = compute_lid_features(X_base_for_knn, leave_one_out=True)
         X = np.hstack([X, lid_train])
-        print(f"Manifold: appended LID ({lid_train.shape[1]}) features (train) — Mahalanobis dropped due to label leakage")
+        print(f"Manifold: appended LID ({lid_train.shape[1]}) features (train) — centroid/Mahalanobis excluded due to transductive leakage")
 
     if USE_SELFCHECK:
         sc_path = "logs/audits/selfcheck_features.npz"
@@ -480,7 +482,7 @@ if __name__=='__main__':
     if USE_MANIFOLD:
         lid_test = compute_lid_features(X_base_for_knn, X_query=X_test_base, leave_one_out=False)
         X_test = np.hstack([X_test, lid_test])
-        print(f"Manifold: appended LID ({lid_test.shape[1]}) features (test)")
+        print(f"Manifold: appended LID ({lid_test.shape[1]}) features (test, against full train pool)")
     if USE_SELFCHECK:
         sc_path = "logs/audits/selfcheck_features.npz"
         sc = np.load(sc_path)

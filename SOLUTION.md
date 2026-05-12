@@ -179,13 +179,19 @@ SMILES-2026-submission/
 - **Probability-level ensembling.** Currently we ensemble labels (majority vote). Saving per-sample probabilities and averaging them usually beats label majority vote on small data.
 - **Multi-prompt augmentation.** Synthesize paraphrased prompts via another LLM; expand the 689-sample training set. Risk: label noise from paraphrases that genuinely change answerability.
 
-## Leakage and lessons
+## Leakage and lessons (two-layer post-mortem)
 
-The mid-day-2 ablation sweep produced cross-validation test accuracies of 83% and 96% — far above what any 0.5B-model probe should achieve on this task. Tracing back, the cause was **label leakage in `compute_mahalanobis_features`**: the per-class Gaussian was fit on the full training set including each query sample's own label, so each training sample's Mahalanobis features were partially computed using its own label. The leakage was masked while other features (perplexity, attention, heuristic) dominated the XGBoost splits; it surfaced as soon as perplexity was removed and the leaky Mahalanobis features were promoted in feature importance.
+**Layer 1 — Mahalanobis label leakage.** The mid-day ablation sweep produced cross-validation test accuracies of 83% and 96% — far above what any 0.5B-model probe should achieve. The cause: `compute_mahalanobis_features` fit a per-class Gaussian on the full training set including each query sample's own label, so each training sample's Mahalanobis features were partially computed using its own label.
 
-**Resolution:** Mahalanobis dropped from the canonical pipeline (the `USE_MANIFOLD=1` path now emits LID-only). LID is label-free and stays; KNN-OOD is also label-free (it uses leave-one-out sample exclusion). The clean re-runs of every previously-leaky config produced test accuracies in the **74-75% range** — about 0.5-1.5pt below their leaky counterparts. The flagship `xgb-everything-5fold-clean` at 74.60% test_acc is the leakage-free champion.
+**First fix attempt — leave-one-out centroid.** Replaced Mahalanobis with Euclidean distance to class centroids, with the query sample's contribution to its own class's centroid removed: `mu_c_loo = (n_c * mu_c − X_i) / (n_c − 1)`. On synthetic data, the LOO check passed. On real data, re-runs *still* showed 85-89% test accuracy — only 1-3pt below the leakier Mahalanobis path.
 
-**Lesson learned:** *every* feature that uses class labels must be computed inside the CV inner loop, not once on the full training set. The error was particularly insidious here because it only manifested in some feature combinations, evading the standard "does train accuracy match val accuracy" sanity check.
+**Layer 2 — Transductive leakage.** Even with sample-level LOO, the class centroids encode the labels of *every other sample* in the dataset, **including samples in other folds' test sets**. Each fold's training samples' centroid features encode labels of samples that fold will eventually be evaluated against. This is technically transductive learning, not direct leakage, but it artificially boosts CV accuracy and won't transfer to the leaderboard's truly-unseen `data/test.csv`.
+
+**Final resolution.** Both Mahalanobis and centroid features dropped from the canonical pipeline. The `USE_MANIFOLD=1` path now emits **LID only** (TwoNN — uses only ratios of nearest-neighbour distances, never any labels). KNN-OOD is also label-free. The flagship `xgb-everything-5fold-clean` at 74.60% / 78.10% AUROC is the honest, leakage-free result.
+
+**Proper fix (future work).** Compute label-aware features inside the CV inner loop, with each fold's training-set labels only. This requires either: (a) refactoring the probe class to receive raw X and y and compute its own augmented features, or (b) restructuring `evaluate.py` to accept per-fold feature matrices. Both are 1-2 hours of careful work; left for next session.
+
+**Lesson learned.** Any feature computed using class labels must respect the CV-fold boundary, not just exclude the query sample. Sample-level LOO is necessary but not sufficient for fold-correctness in 5-fold CV. This pitfall is particularly insidious because it only manifests in certain feature combinations (when the leaky features dominate XGBoost splits) and passes the "does train accuracy match val accuracy" sanity check (because both train and val have the same kind of leakage built in).
 
 ## Contribution attribution
 
