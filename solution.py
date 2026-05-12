@@ -79,6 +79,7 @@ USE_KNN_OOD = os.environ.get("USE_KNN_OOD", "0") == "1"  # if True, append per-s
 USE_MANIFOLD = os.environ.get("USE_MANIFOLD", "0") == "1"  # if True, append LID (TwoNN) + per-class Mahalanobis distance features
 USE_ATTENTION_TO_PROMPT = os.environ.get("USE_ATTENTION_TO_PROMPT", "0") == "1"  # if True (with USE_ATTENTION=1), add per-layer attention-mass-to-prompt features
 USE_PER_HEAD_ATTN = os.environ.get("USE_PER_HEAD_ATTN", "0") == "1"  # if True (with USE_ATTENTION=1), add 336 per-(layer, head) attention-to-prompt features
+USE_SELFCHECK = os.environ.get("USE_SELFCHECK", "0") == "1"  # if True, load pre-computed SelfCheckGPT features from logs/audits/selfcheck_features.npz
 # Sweep knob. "prompt_response" (default, fed to Qwen as the original solution did),
 # "prompt_only" (no model response — abstention-style probing), "response_only".
 TEXT_MODE = os.environ.get("TEXT_MODE", "prompt_response")
@@ -309,6 +310,17 @@ if __name__=='__main__':
         X = np.hstack([X, lid_train, mahal_train])
         print(f"Manifold: appended LID ({lid_train.shape[1]}) + Mahalanobis ({mahal_train.shape[1]}) features (train)")
 
+    if USE_SELFCHECK:
+        sc_path = "logs/audits/selfcheck_features.npz"
+        sc = np.load(sc_path)
+        sc_train = sc["train"]
+        assert sc_train.shape[0] == X.shape[0], (
+            f"SelfCheck train features have {sc_train.shape[0]} rows; expected {X.shape[0]}. "
+            f"Re-run selfcheck_features.py without --quick."
+        )
+        X = np.hstack([X, sc_train])
+        print(f"SelfCheck: appended {sc_train.shape[1]} features (train)")
+
     print(f"Feature matrix : {X.shape}  (feature_dim = {X.shape[1]})")
     print(f"Geometric feats: {USE_GEOMETRIC}")
 
@@ -468,6 +480,16 @@ if __name__=='__main__':
         mahal_test = compute_mahalanobis_features(X_base_for_knn, y, X_test_base)
         X_test = np.hstack([X_test, lid_test, mahal_test])
         print(f"Manifold: appended LID ({lid_test.shape[1]}) + Mahalanobis ({mahal_test.shape[1]}) features (test)")
+    if USE_SELFCHECK:
+        sc_path = "logs/audits/selfcheck_features.npz"
+        sc = np.load(sc_path)
+        sc_test = sc["test"]
+        assert sc_test.shape[0] == X_test.shape[0], (
+            f"SelfCheck test features have {sc_test.shape[0]} rows; expected {X_test.shape[0]}. "
+            f"Re-run selfcheck_features.py without --quick."
+        )
+        X_test = np.hstack([X_test, sc_test])
+        print(f"SelfCheck: appended {sc_test.shape[1]} features (test)")
     test_extract_time = time.time() - t_test0
     wandb_utils.log({"test/extract_time_s": test_extract_time})
 
