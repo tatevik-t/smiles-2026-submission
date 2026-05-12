@@ -76,14 +76,26 @@ SMILES-HALLUCINATION-DETECTION/
 
 ### Reproduce the submission exactly
 
-The submitted `predictions.csv` is a 5-probe ensemble. To regenerate it from scratch, see [SOLUTION.md § Reproduce the submission](SOLUTION.md#reproduce-the-submission). Single command if `xgboost` and dependencies are installed:
+The submitted `predictions.csv` is a 5-model majority-vote ensemble. Reproduce in three steps:
 
 ```bash
-./run_sweep.sh    # full sweep with archiving; or
-ONLY="34,35,36,37" SUFFIX="" ./run_sweep.sh   # just the 5 ensemble inputs
-python ensemble_predictions.py --out predictions.csv
-cp logs/runs/all-features-5fold/results.json results.json
+# 1) Pre-compute SelfCheckGPT and head-attribution features (one-time).
+python selfcheck_features.py   # ~15 min, writes logs/audits/selfcheck_features.npz
+python head_attribution.py     # ~30 s, writes logs/audits/head_attribution_*.{npy,npz,json}
+
+# 2) Generate the 5 ensemble inputs.
+ONLY="57,58,46,5" SUFFIX="-clean" ./run_sweep.sh   # 4 of the 5 inputs (xgb-everything-5fold, abl-no-perplexity, manifold-5fold, split-5fold-baseline)
+ONLY="55" SUFFIX="" ./run_sweep.sh                  # the 5th: xgb-selfcheck-5fold
+
+# 3) Build the ensemble + restore the canonical submission artifacts.
+python ensemble_predictions.py \
+  --runs xgb-everything-5fold-clean abl-no-perplexity-clean \
+         xgb-selfcheck-5fold manifold-5fold-clean final-submission \
+  --out logs/runs/ensemble-V4-clean/predictions.csv
+./lock_canonical.sh   # copies ensemble-V4-clean/predictions.csv → predictions.csv, and xgb-everything-5fold-clean/results.json → results.json
 ```
+
+⚠️ **Note:** any individual `python solution.py` run will overwrite `predictions.csv` and `results.json` in the repo root. After a sweep, always run `./lock_canonical.sh` to restore the submission artifacts from the per-run archives under `logs/runs/`.
 
 ### Run a single probe variant (the original competition pipeline)
 
