@@ -113,3 +113,42 @@ Splits : 5 fold(s)
 Results saved to 'results.json'
 Test set loaded: 100 samples
 Test extraction & aggregation:   0%|          | 0/25 [00:00<?, ?batch/s]Test extraction & aggregation:   8%|▊         | 2/25 [00:00<00:01, 11.57batch/s]Test extraction & aggregation:  16%|█▌        | 4/25 [00:00<00:01, 12.10batch/s]Test extraction & aggregation:  24%|██▍       | 6/25 [00:00<00:01, 11.43batch/s]Test extraction & aggregation:  32%|███▏      | 8/25 [00:00<00:01, 11.47batch/s]Test extraction & aggregation:  40%|████      | 10/25 [00:00<00:01, 12.03batch/s]Test extraction & aggregation:  48%|████▊     | 12/25 [00:01<00:01, 12.15batch/s]Test extraction & aggregation:  56%|█████▌    | 14/25 [00:01<00:00, 12.42batch/s]Test extraction & aggregation:  64%|██████▍   | 16/25 [00:01<00:00, 11.44batch/s]Test extraction & aggregation:  72%|███████▏  | 18/25 [00:01<00:00, 12.69batch/s]Test extraction & aggregation:  80%|████████  | 20/25 [00:01<00:00, 13.18batch/s]Test extraction & aggregation:  88%|████████▊ | 22/25 [00:01<00:00, 13.68batch/s]Test extraction & aggregation:  96%|█████████▌| 24/25 [00:01<00:00, 12.83batch/s]Test extraction & aggregation: 100%|██████████| 25/25 [00:02<00:00, 12.48batch/s]
+wandb: uploading artifact submission; updating run metadata
+wandb: uploading artifact submission
+wandb: uploading output.log; uploading wandb-summary.json; uploading config.yaml
+wandb: uploading history steps 15-15, summary, console lines 100-101
+wandb: 
+wandb: Run history:
+wandb:      extract/feature_dim ▁
+wandb:       extract/n_features ▁
+wandb:   extract/sec_per_sample ▁
+wandb:           extract/time_s ▁
+wandb:      final_probe/n_train ▁
+wandb:        final_probe/n_val ▁
+wandb:    final_probe/threshold ▁
+wandb: fold_1/baseline_accuracy ▁
+wandb:       fold_1/baseline_f1 ▁
+wandb:            fold_1/n_test ▁
+wandb:                      +82 ...
+wandb: 
+wandb: Run summary:
+wandb: avg/baseline_accuracy 0.70102
+wandb:       avg/baseline_f1 0.82423
+wandb:     avg/test_accuracy 0.75178
+wandb:        avg/test_auroc 0.7739
+wandb:           avg/test_f1 0.83516
+wandb:    avg/train_accuracy 1
+wandb:       avg/train_auroc 1
+wandb:          avg/train_f1 1
+wandb:      avg/val_accuracy 0.77885
+wandb:         avg/val_auroc 0.76447
+wandb:                   +97 ...
+wandb: 
+wandb: 🚀 View run abl-no-perhead at: https://wandb.ai/tatevik-th/smiles-2026-hallucination/runs/bkeibipe
+wandb: ⭐️ View project at: https://wandb.ai/tatevik-th/smiles-2026-hallucination
+wandb: Synced 5 W&B file(s), 1 media file(s), 5 artifact file(s) and 0 other file(s)
+wandb: Find logs at: ./wandb/run-20260512_143035-bkeibipe/logs
+Manifold: appended LID (2) + Mahalanobis (4) features (test)
+SelfCheck: appended 6 features (test)
+Final probe: trained on 620 samples, threshold tuned on 69 (chosen threshold: 0.2300)
+Predictions saved to 'predictions.csv'  (100 samples)
