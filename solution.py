@@ -305,10 +305,12 @@ if __name__=='__main__':
         print(f"KNN-OOD: appended {knn_train.shape[1]} features (train, LOO)")
 
     if USE_MANIFOLD:
+        # NOTE: Mahalanobis dropped — it has label leakage when X_query is in X_train
+        # (each sample's label was used to fit its own class's Gaussian). LID is
+        # label-free and stays. See SOLUTION.md "leakage and lessons" section.
         lid_train = compute_lid_features(X_base_for_knn, leave_one_out=True)
-        mahal_train = compute_mahalanobis_features(X_base_for_knn, y, X_base_for_knn)
-        X = np.hstack([X, lid_train, mahal_train])
-        print(f"Manifold: appended LID ({lid_train.shape[1]}) + Mahalanobis ({mahal_train.shape[1]}) features (train)")
+        X = np.hstack([X, lid_train])
+        print(f"Manifold: appended LID ({lid_train.shape[1]}) features (train) — Mahalanobis dropped due to label leakage")
 
     if USE_SELFCHECK:
         sc_path = "logs/audits/selfcheck_features.npz"
@@ -477,9 +479,8 @@ if __name__=='__main__':
         print(f"KNN-OOD: appended {knn_test.shape[1]} features (test, against training pool)")
     if USE_MANIFOLD:
         lid_test = compute_lid_features(X_base_for_knn, X_query=X_test_base, leave_one_out=False)
-        mahal_test = compute_mahalanobis_features(X_base_for_knn, y, X_test_base)
-        X_test = np.hstack([X_test, lid_test, mahal_test])
-        print(f"Manifold: appended LID ({lid_test.shape[1]}) + Mahalanobis ({mahal_test.shape[1]}) features (test)")
+        X_test = np.hstack([X_test, lid_test])
+        print(f"Manifold: appended LID ({lid_test.shape[1]}) features (test)")
     if USE_SELFCHECK:
         sc_path = "logs/audits/selfcheck_features.npz"
         sc = np.load(sc_path)

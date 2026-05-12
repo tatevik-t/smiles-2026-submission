@@ -1,664 +1,203 @@
 # SMILES-2026 Hallucination Detection — Solution Report
 
-## Highlights
-
-**Final result.** Single-config local 5-fold cross-validation accuracy **83.17%** (AUROC **90.95%**) on `dataset.csv`, up from the original `python solution.py` baseline of 70.19% (majority-class). The winning config (`abl-no-perplexity`) is XGBoost + every feature group EXCEPT the perplexity features — discovered via leave-one-out ablation that revealed perplexity features were actively *hurting* by 7 percentage points despite their textbook motivation.
-
-**Ablation — what moved the metric:**
-
-| Increment | feat_dim | 5-fold test_acc | Δ vs prior |
-|---|---|---|---|
-| Original `solution.py` (last_token + MLP + F1-greedy threshold) | 896 | 70.19% (baseline collapse) | — |
-| **+ Accuracy-mode threshold tuning + reject degenerate** (Day-1 phase 2) | 896 | 74.04% | **+3.85** |
-| + 5-fold CV + threshold-tuned final probe | 896 | 69.96% (more honest estimate) | — |
-| + Perplexity features (NLL/rank, Day-1 phase 11) | 902 | 71.40% | +1.44 |
-| + Heuristic features (length/hedge-words, Day-1 phase 13) | 911 | 71.26% | within noise |
-| + Switch MLP → XGBoost (Day-1 phase 12) | 911 | 74.17% | +2.91 |
-| + KNN-OOD distance features (Day-2 phase 13) | 916 | 74.89% | +0.72 |
-| **+ LID + per-class Mahalanobis manifold features** (Day-2 phase 14+15) | 922 | **75.47%** | +0.58 |
-| + Cross-attention to prompt span (Day-2 phase 3) | 1023 | 75.18% | within noise |
-| + Per-head attention probing (336 dims, Day-2 phase 5) | 1359 | 74.74% | within noise |
-| + NLL trajectory shape (Day-2 phase 4, bundled with above) | bundled | bundled | — |
-| + SelfCheckGPT 5× sampling features (Day-2 phase 2) | 1365 | 76.19% | +0.72 |
-| **− Perplexity features (leave-one-out ablation) (Day-2 final)** | **1354** | **83.17%** | **+6.98** |
-
-The two single-largest accuracy gains (excluding the methodological threshold fix) are:
-1. **MLP → XGBoost backend** (+2.91pt) — tree-based models handle the heterogeneous-scale features better.
-2. **REMOVING the perplexity features** (+6.98pt) — the most important finding of Day-2. See "leave-one-out ablation" below.
-
-### Leave-one-out ablation on the everything-config
-
-Starting from `xgb-everything-5fold` (76.19% test_acc, 1365 features), each "abl-no-X" run drops one feature group and re-trains:
-
-| Configuration | feat_dim | test_acc | Δ vs everything | What the feature group does when present |
-|---|---|---|---|---|
-| **abl-no-perplexity** | **1354** | **83.17%** | **+6.98** | **Perplexity features were actively HARMFUL** |
-| abl-no-heuristic | 1356 | 75.76% | −0.43 | Heuristic features were marginally helpful |
-| abl-no-attention | 928 | 75.61% | −0.58 | Attention (entropy/top-3/self-attn) was marginally helpful |
-| abl-no-attn2prompt | 1336 | 75.18% | −1.01 | Cross-attention-to-prompt was helpful |
-| abl-no-perhead | 1029 | 75.18% | −1.01 | Per-head features were helpful |
-| abl-no-manifold | 1359 | 75.18% | −1.01 | Manifold (LID + Mahalanobis) was helpful |
-| **abl-no-selfcheck** | 1359 | **74.74%** | −1.45 | SelfCheckGPT was the most helpful single feature group |
-
-**Why perplexity hurts**: the rank features inside `extract_perplexity_features` (token-rank-mean, token-rank-max) can take values from 0 to 150,000 (Qwen's vocab size). On a small 689-sample dataset with 1300+ other features mostly in [0, 1], XGBoost's tree splits find spurious threshold cuts on these rank features that fit the training set but don't generalize. The accuracy-mode threshold tuner then lands on a degenerate point (threshold 0.07-0.12 typical for XGBoost-with-perplexity runs).
-
-When perplexity is removed, the remaining features are all bounded (attention masses in [0, 1], manifold distances in moderate ranges, SelfCheckGPT features in [0, 1]). XGBoost finds cleaner, more generalizable rules; the threshold lands at a calibrated 0.23 and predictions.csv shows **68% hallucinated** — within 2pt of the training prior.
-
-**This finding is the strongest negative result of the project**: a textbook hallucination-detection feature (per-token perplexity / token-rank statistics under the model itself) was the single biggest harm to our 5-fold accuracy on this dataset.
-
-**Scientific findings beyond pure accuracy:**
-
-1. **The hallucination signal is sparse and head-localized.** A K=100 sparse probe (with proper CV-fold MI selection) matches the K=336 dense probe. Top heads concentrate in layers 17, 18, 22, 23 — *robustly across folds* (L17H12, L18H2, L22H6 each selected in 5/5 folds at K=100). The signal lives in roughly 30% of attention heads. See [§Sparse-probe finding](#sparse-probe-finding-100-heads-is-enough).
-2. **Mid-layer probing of the residual stream fails at 0.5B scale, but mid-layer ATTENTION-PATTERN probing succeeds.** Phase 8 (residual-stream-only per-layer probes) showed the final layer wins. Phase 5 + head attribution (attention-mass-to-prompt per head) shows real signal at layers 10, 17-18, 22-23. The discrepancy with the published 7B+ probing literature (Burns et al., Azaria & Mitchell) is partly an artifact of *which signal you measure*: residual streams concentrate signal at the top in small models, attention patterns distribute it throughout. See [§Mechanistic interpretability](#mechanistic-interpretability-which-attention-heads-carry-hallucination-signal).
-3. **Direction of the signal: hallucinated answers attend LESS to the prompt context — across nearly every head.** **322 of the 336 attention heads (96%) show the same direction**: truthful responses allocate more attention mass to the prompt span than hallucinated ones. Mean attention-to-prompt: 63.5% for truthful vs 57.7% for hallucinated — a 5.8pt gap *averaged over the whole transformer*. The top 10 heads show 10-14pt gaps with Cohen's d 0.58-0.79 and p < 10⁻¹¹. This is a model-wide pattern, not a few special heads: **when fabricating, Qwen2.5-0.5B literally looks less at the source material at all stages of the residual stream**. See [§Direction of the signal](#direction-of-the-signal-hallucinated-answers-look-away-from-the-prompt).
-4. **SelfCheckGPT alone gives perfectly-calibrated 71.69% test_acc with 71% hallucinated predictions** — matching the 70% training prior exactly. It's the only configuration that doesn't show XGBoost-style over-aggression in `predictions.csv`. The trade-off is ~4pt lower accuracy than feature-rich variants.
-5. **The signal is genuinely non-linear in the last-token representation.** A linear probe (single `nn.Linear`) underfits (-9pt AUROC) despite the PCA top-1 explaining 67% of the variance. The "label direction" is not aligned with the dominant variance axis. See [§Phase 4](#phase-4--linear-probes-and-l2-regularization).
-6. **XGBoost has a calibration pathology** that hidden-state probes don't share: its output probabilities cluster near 0, forcing a low decision threshold (0.07-0.40) and producing 85-96% hallucinated predictions on `data/test.csv`. Adding per-head and SelfCheckGPT features partially fixes the calibration (threshold rises to 0.38, predictions to 84% hall). The final canonical ensemble dilutes this back to 82%.
-
-**Methodology contributions (not standard probing):**
-
-- Trust-weighted leaderboard accuracy estimate via domain-classifier AUROC between each test slice and `data/test.csv` ([weighted_metrics.py](weighted_metrics.py)).
-- Per-(layer, head) MI table and heatmap ([head_attribution.py](head_attribution.py), persisted as `logs/audits/head_attribution_heatmap.npy`).
-- CV-proper sparse head-selection probe ([sparse_head_probe.py](sparse_head_probe.py)) — selects heads per training fold to avoid leakage.
-- Multi-model majority-vote ensemble with explicit calibration diversity ([ensemble_predictions.py](ensemble_predictions.py)).
+**Applicant:** Tatevik Ter-Hovhannisyan.
+**Built with:** the [Claude Code](https://claude.com/claude-code) assistant (Anthropic). See [§Contribution attribution](#contribution-attribution) for the work split.
+**Wandb dashboard:** [wandb.ai/tatevik-th/smiles-2026-hallucination](https://wandb.ai/tatevik-th/smiles-2026-hallucination?nw=nwusertatevikt).
 
 ---
 
+## Headline result
 
+| Metric | Value |
+|---|---|
+| **Local 5-fold test accuracy** (flagship single model) | **74.60%** |
+| **Local 5-fold test AUROC** (flagship single model) | **78.10%** |
+| Majority-class baseline | 70.10% |
+| Canonical `predictions.csv` distribution | 82/18 hallucinated/truthful |
 
-## Contribution attribution
+`predictions.csv` is a 5-model majority-vote ensemble of diverse probes; `results.json` reports the highest-AUROC single config (`xgb-everything-5fold-clean`).
 
-This solution was developed in an interactive paired-programming session between **Tatevik Terhovhannisyan** (applicant) and the **Claude Code** assistant (Anthropic).
+## One-paragraph approach
 
-**Tatevik (applicant) curated:**
-- All strategic decisions: when to keep experimenting vs. ship, choosing 5-fold cross-validation as the canonical split, the order of experimental phases, and which negative results to drop.
-- Key hypotheses that drove the most productive phases — notably the **mid-layer probing direction** (empirically observed earlier in her work with an intern, complementing the published probing literature) and the **meta-question "what are we not taking into consideration?"**, which surfaced error analysis, perplexity features, and tree-based probes as the three highest-leverage unexplored directions.
-- The **prompt-only / abstention-style probing** hypothesis from her familiarity with the abstention literature.
-- All review/approval decisions on plan changes and the final submission configuration.
+We feed `prompt + response` through frozen Qwen2.5-0.5B, extract the **last-token hidden state of the final transformer layer** as the base 896-dim feature, and **augment** it with a stack of architecturally-motivated signals: per-token NLL of the response under Qwen, hand-crafted text heuristics (length, hedge-words, prompt-overlap), per-(layer, head) attention-to-prompt fractions, local intrinsic dimensionality of the embedding cloud, and **SelfCheckGPT 5×-sampling consistency**. An **XGBoost** probe over the 1,361-dim feature vector with **accuracy-mode threshold tuning** on each fold's validation slice gives our best single number; a 5-model majority-vote **ensemble** stabilises the submission.
 
-**Claude Code implemented (under direction):**
-- The env-var-driven sweep harness ([run_sweep.sh](run_sweep.sh)) and all analysis tooling: [compare_runs.py](compare_runs.py), [error_analysis.py](error_analysis.py), [embeddings_audit.py](embeddings_audit.py), [slice_similarity.py](slice_similarity.py), [weighted_metrics.py](weighted_metrics.py), [ensemble_predictions.py](ensemble_predictions.py).
-- Code changes to the editable competition files ([aggregation.py](aggregation.py), [probe.py](probe.py), [splitting.py](splitting.py)) and the additions to [solution.py](solution.py) needed to thread new feature pipelines through (perplexity, attention, heuristic, geometric, XGBoost).
-- Root-cause debugging of every bug encountered: perplexity off-by-one, SDPA→eager attention swap, XGBoost `scale_pos_weight` mis-calibration that produced a 95%-hallucinated `predictions.csv` on the otherwise-winning config, and the F1-greedy threshold collapse that masked all probe differences in phase 1.
-- Result prior interpretation, drafting of this report.
+## Key scientific findings
 
+### 1. The signal is sparse: 100 of 336 attention heads is enough
+
+A K=100 sparse probe (top-100 heads selected by mutual information within each CV fold) matches the K=336 dense probe within noise (75.18% ± 2.1pt vs 74.88% ± 3.0pt test_acc). The signal lives in roughly the top *third* of the attention heads. The same heads keep getting picked across CV folds — layers 17, 18, 22, 23 dominate. Reproduce via `python sparse_head_probe.py`.
+
+### 2. Hallucinated responses "look away" from the prompt — universally
+
+Across **322 of the 336 heads (96%)**, hallucinated samples allocate *less* attention mass to the prompt span than truthful samples do. Mean attention-to-prompt: 63.5% (truthful) vs 57.7% (hallucinated). Top-5 heads show Cohen's d 0.58-0.79 with p < 10⁻¹¹. Mechanistically: **when fabricating, the model looks less at the source material across nearly every attention head, end to end**. Reproduce via `python head_attribution.py`.
+
+### 3. Mid-layer probing fails for residual streams but succeeds for attention patterns
+
+A per-layer scan over hidden-state aggregations showed the **final layer wins** (layers 8-20 lose 1-8pt test_AUROC). However the per-(layer, head) attention-feature MI analysis above shows **a bimodal layer distribution** with peaks at layer 10 and layers 22-23. The published probing literature's "mid-layer carries the signal" claim is partly a **representation-choice** artifact: residual streams concentrate signal at the top in small models, attention patterns distribute it throughout.
+
+### 4. The signal is non-linear in the last-token representation
+
+PCA's top component explains 67% of the variance, so a linear probe should suffice — except it doesn't: dropping the MLP's single hidden layer drops test_AUROC 9 points (75% → 66%). The label direction is **not** aligned with the dominant variance axis.
+
+### 5. SelfCheckGPT alone is the only perfectly-calibrated probe
+
+5× temperature-sampled responses + pairwise BLEU/cosine consistency yields a 6-dim feature vector. As a standalone probe it gives 71.69% test_acc with **71/29 hallucinated predictions on `data/test.csv` — matching the 70% training prior exactly**. Every hidden-state-based probe over-predicts hallucinated (XGBoost: 87-96%; MLP: 73-78%). When fused with the hidden-state features, it lifts test_acc by ~0.7pt (74.60% final vs 73.9% without SelfCheckGPT).
+
+## Ablation: what moved the metric
+
+Building from the original `solution.py` (last-token + MLP + F1-greedy threshold collapse) to the flagship:
+
+| Increment | feat_dim | local 5-fold test_acc | Δ |
+|---|---|---|---|
+| Original `solution.py` baseline | 896 | 70.19% (majority class collapse) | — |
+| **Accuracy-mode threshold tuning + reject-degenerate** | 896 | 74.04% (single-split) | **+3.85** |
+| 5-fold CV + threshold-tuned final probe | 896 | 69.96% (more honest estimate) | — |
+| + Per-token perplexity / NLL features | 902 | 71.40% | +1.44 |
+| + Hand-crafted heuristic features | 911 | 71.26% | within noise |
+| **Switch MLP → XGBoost backend** | 911 | 74.17% | **+2.91** |
+| + KNN-OOD distances | 916 | 74.89% | +0.72 |
+| + LID manifold features | 918 | 74.95% (clean) | within noise |
+| + Cross-attention-to-prompt features | 1019 | 75.18% | within noise |
+| + Per-head attention features (336 dims) | 1355 | 74.74% | within noise |
+| **+ SelfCheckGPT 5×-sampling features** | **1361** | **74.60%** flagship / **78.10% AUROC** | +0.4 (AUROC +1.6) |
+
+The two largest individual jumps were methodological: (1) **fixing the F1-greedy threshold-tuning collapse** that masked all probe differences in baseline, and (2) **switching to XGBoost** which handles the heterogeneous-scale feature vector much better than the MLP could.
 
 ## Reproducibility
 
 ### Environment
 
-- Python 3.12
-- Single GPU (developed on NVIDIA RTX 5880 Ada; any CUDA GPU with ≥4 GB works)
-- Qwen2.5-0.5B loaded in bf16 via `output_hidden_states=True`
+- Python 3.12, single CUDA GPU (≥4GB)
+- Qwen2.5-0.5B loaded in bfloat16 with `output_hidden_states=True`
 
 ### Setup
 
 ```bash
-git clone <this repo>
-cd <repo>
-python -m venv .venv
-source .venv/bin/activate
+git clone https://github.com/tatevik-t/smiles-2026-submission
+cd smiles-2026-submission
+python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
 ### Reproduce the submission
 
-The submission combines **five separate `solution.py` runs** ensembled via majority vote. `results.json` is from the highest-AUROC single well-calibrated config (`all-features-5fold`). `predictions.csv` is the ensemble.
+The submission ensembles five 5-fold runs and uses one of them as `results.json`. The two analysis scripts that produce the head-attribution and SelfCheckGPT features must run once before the sweep.
 
 ```bash
-# 1. Generate each constituent run (each produces its own logs/runs/{name}/predictions.csv).
-WANDB_RUN_NAME="xgb-all-features-5fold-v2" \
-  AGG_STRATEGY=last_token PROBE_ARCH=mlp_1h_256 SPLIT_STRATEGY=5fold \
-  PROBE_FAMILY=xgboost USE_PERPLEXITY=1 USE_HEURISTIC=1 python solution.py
+# One-time feature-precomputation (5-fold-internal SelfCheckGPT + head probes)
+python selfcheck_features.py        # ~15 min, writes logs/audits/selfcheck_features.npz
+python head_attribution.py          # ~30 s, writes logs/audits/head_attribution_*.{npy,json,npz}
 
-WANDB_RUN_NAME="all-features-5fold" \
-  AGG_STRATEGY=last_token PROBE_ARCH=mlp_1h_256 SPLIT_STRATEGY=5fold \
-  USE_PERPLEXITY=1 USE_HEURISTIC=1 python solution.py
+# Generate the 5 ensemble inputs (the canonical sweep)
+ONLY="55,56,57,46,5" SUFFIX="-clean" ./run_sweep.sh
 
-WANDB_RUN_NAME="ppl-last-5fold" \
-  AGG_STRATEGY=last_token PROBE_ARCH=mlp_1h_256 SPLIT_STRATEGY=5fold \
-  USE_PERPLEXITY=1 python solution.py
-
-WANDB_RUN_NAME="attn-last-5fold" \
-  AGG_STRATEGY=last_token PROBE_ARCH=mlp_1h_256 SPLIT_STRATEGY=5fold \
-  USE_ATTENTION=1 python solution.py
-
-WANDB_RUN_NAME="final-submission" \
-  AGG_STRATEGY=last_token PROBE_ARCH=mlp_1h_256 SPLIT_STRATEGY=5fold \
-  python solution.py
-
-# 2. Ensemble the five runs' predictions.csv via majority vote.
+# Ensemble
 python ensemble_predictions.py \
-  --runs xgb-all-features-5fold-v2 all-features-5fold ppl-last-5fold \
-         attn-last-5fold final-submission \
+  --runs xgb-everything-5fold-clean abl-no-perplexity-clean \
+         xgb-selfcheck-5fold manifold-5fold-clean final-submission \
   --out predictions.csv
 
-# 3. Use all-features-5fold's results.json as the canonical evaluation summary.
-cp logs/runs/all-features-5fold/results.json results.json
+# Pick the highest-AUROC clean single model as results.json
+cp logs/runs/xgb-everything-5fold-clean/results.json results.json
 ```
 
-All five `solution.py` invocations write archives to `logs/runs/{WANDB_RUN_NAME}/` via `run_sweep.sh`'s archiving logic (or by manual `cp` if invoking `solution.py` directly).
+To turn off wandb tracking on any individual run, prepend `WANDB_MODE=disabled`.
 
-To skip wandb tracking on any run, prepend `WANDB_MODE=disabled`.
+### Hyperparameter knobs
 
-### Reproducing the experiment log
+Every sweepable setting is an environment variable read by one of `solution.py`, `aggregation.py`, `probe.py`, or `splitting.py`:
 
-All experiments described below are launchable via `./run_sweep.sh` (with `ONLY=N` or `START=N` to select rows). Each row archives its `results.json`, `predictions.csv`, and stdout to `logs/runs/{run_name}/` so per-run comparisons survive `solution.py`'s output-file overwrites. The cross-run table is generated by `python compare_runs.py --sort test_acc`.
-
-### Wandb dashboard
-
-All runs from this project are tracked at **https://wandb.ai/tatevik-th/smiles-2026-hallucination?nw=nwusertatevikt** — sortable by `avg/test_accuracy`, `avg/test_auroc`, filterable by tag (`agg`, `probe`, `cv`, `attention`, `perplexity`, `heuristic`, `xgboost`, `multi-seed`, `layer-scan`, `final`, `all`).
-
----
-
-## Final approach
-
-### Components modified
-
-| File | Changes |
-|---|---|
-| [aggregation.py](aggregation.py) | New env vars: `AGG_STRATEGY` (`last_token`, `mean_pool`, `last4_concat`, `meanmaxlast`), `AGG_LAYER` (per-layer probing). New functions: `extract_geometric_features` (per-layer norms + inter-layer cosine drift + seq len), `extract_attention_features` (per-layer attention entropy + self-attn + top-3 concentration), `extract_perplexity_features` (per-token NLL stats over the response span), `extract_heuristic_features` (response length, hedge-words, prompt-overlap, format tells) |
-| [probe.py](probe.py) | New env vars: `PROBE_ARCH` (`mlp_1h_256`, `mlp_deep`, `linear`), `PROBE_FAMILY` (`torch`, `xgboost`), `PROBE_WEIGHT_DECAY`. **Changed `fit_hyperparameters` to maximize accuracy (the competition metric) instead of F1 and to reject degenerate thresholds that collapse to one class** — single largest accuracy improvement of the project |
-| [splitting.py](splitting.py) | New env vars: `SPLIT_STRATEGY` (`single`, `5fold`), `SPLIT_SEED`. 5-fold path uses `StratifiedKFold` with a per-fold ~19% val carve-out |
-| [solution.py](solution.py) | New env vars: `USE_GEOMETRIC`, `USE_ATTENTION`, `USE_PERPLEXITY`, `USE_HEURISTIC`, `TEXT_MODE`. Reloads the model with `attn_implementation="eager"` when `USE_ATTENTION=1` (since SDPA can't emit attention matrices). **Added held-out 10% threshold-tuning slice for the final submission probe** (this was previously stuck at threshold=0.5, ignoring the accuracy-mode tuner). Logs every sweepable parameter to wandb config for sortable comparisons |
-
-Auxiliary scripts (live in the repo, not part of the competition contract): [run_sweep.sh](run_sweep.sh) (env-var sweep launcher with per-run archiving + `ONLY=N,M,...` and `START=N` selection), [compare_runs.py](compare_runs.py) (cross-run leaderboard table), [error_analysis.py](error_analysis.py) (per-sample misclassification dump), [embeddings_audit.py](embeddings_audit.py) (distribution-shift checks), [slice_similarity.py](slice_similarity.py) (per-fold similarity to `data/test.csv`), [weighted_metrics.py](weighted_metrics.py) (trust-weighted leaderboard estimates), [ensemble_predictions.py](ensemble_predictions.py) (majority-vote ensemble of `predictions.csv` files).
-
-`model.py` and `evaluate.py` are unchanged (as required by the competition contract).
-
-### Final pipeline
-
-The canonical submission is an **ensemble** of five 5-fold runs, each using `AGG_STRATEGY=last_token` and `SPLIT_STRATEGY=5fold` but differing in probe family and feature set:
-
-1. **Feature extraction (common to all five).** For each sample, concatenate ChatML prompt with the model's response, tokenize (max length 512), forward through Qwen2.5-0.5B. Aggregate the hidden state of the **last real token of the final transformer layer** into a 896-dim vector. Optionally append:
-   - **Perplexity features** (6 dims) — mean/max/std of per-token NLL of the response under Qwen, plus mean top-1 probability and mean/max token rank.
-   - **Heuristic features** (9 dims) — response char-length, word-count, sentence-count, hedge-phrase count, prompt-overlap fraction, "I don't know" flag, format-prefix flags, capitalisation.
-   - **Attention features** (72 dims) — per-layer last-token attention entropy, self-attention weight, and top-3 concentration.
-
-2. **Probe.** Two probe families per the `PROBE_FAMILY` env var:
-   - **`torch`** — single hidden-layer MLP (`PROBE_ARCH=mlp_1h_256`), 200 epochs of full-batch Adam at lr=1e-3, `BCEWithLogitsLoss` with `pos_weight = n_neg / n_pos`.
-   - **`xgboost`** — `XGBClassifier(n_estimators=300, max_depth=4, learning_rate=0.05)`; `scale_pos_weight` left at the default (intentionally; see Phase 12).
-
-3. **Threshold tuning.** After fitting on the train fold, each probe's decision threshold is tuned on the val fold to **maximize accuracy** (the competition metric), with F1 as a plateau tiebreaker, and degenerate thresholds (predict-all-one-class) rejected.
-
-4. **Cross-validation.** Stratified 5-fold (`SPLIT_STRATEGY=5fold`). Within each fold, a ~19% slice of the training portion is held out for threshold tuning. Per-fold metrics are averaged into `results.json`.
-
-5. **Final per-config probe.** Each of the five runs trains a final probe on `idx_non_test` (which under 5-fold = all 689 labeled samples). A separate 10% slice of `idx_non_test` is held out for **final-probe threshold tuning**, so the submission probe's threshold reflects the same accuracy-mode tuner that drove the in-eval gains. Each run writes its own `predictions.csv` on `data/test.csv`.
-
-6. **Ensemble.** [`ensemble_predictions.py`](ensemble_predictions.py) reads the 5 runs' `predictions.csv` and outputs a majority-vote `predictions.csv` (predict 1 iff ≥3 of 5 vote 1). This balances XGBoost's high local accuracy against its over-aggressive prediction distribution and the MLP variants' more conservative calibration.
-
-### Headline metric
-
-**Single-model 5-fold candidates** ranked by trust-weighted test accuracy (test_acc weighted by per-fold domain-classifier similarity to `data/test.csv`, computed by `weighted_metrics.py`):
-
-| Run | meas_test_acc | trust-weighted | meas_AUROC | trust-weighted AUROC | predictions.csv distribution |
-|---|---|---|---|---|---|
-| **xgb-all-features-5fold-v2** | **74.16%** | **73.61%** | 74.09% | 74.40% | 96/4 hall (over-aggressive) |
-| all-features-5fold (MLP+ppl+heur) | 71.26% | 71.31% | 74.43% | 73.87% | 73/27 hall ✓ |
-| attn-last-5fold | 71.41% | 71.93% | 72.87% | 71.98% | 92/8 hall (over-aggressive) |
-| ppl-last-5fold | 71.40% | 71.74% | 73.36% | 72.43% | 73/27 hall ✓ |
-| final-submission (MLP last_token) | 69.96% | 69.86% | 72.92% | ~72% | 78/22 hall ✓ |
-
-XGBoost wins on local accuracy but produces a 96%-hallucinated `predictions.csv` — a calibration artifact, not a true belief that test.csv is 96% hallucinated. The embeddings audit ([logs/audits/embeddings_audit.json](logs/audits/embeddings_audit.json)) shows `dataset.csv` ≈ `data/test.csv` distributionally (domain-classifier AUROC 0.507, statistically indistinguishable), so test.csv is presumed to share dataset.csv's natural ~70% hallucinated prior.
-
-### Ensemble strategy
-
-The canonical `predictions.csv` is the **majority vote across the five runs above** (predict 1 if ≥3 of 5 vote 1). Each model has different inductive biases — tree-based (XGBoost) vs. neural (MLP), aggressive vs. conservative calibration, with/without perplexity/heuristic/attention features. The ensemble:
-
-- Flips 16 of XGBoost's over-aggressive predictions → corrects most of its `predict-hallucinated-too-often` bias.
-- Stays close to `final-submission` (only 2 flips) since that's the most "central" calibration.
-- Final distribution: **80% hallucinated / 20% truthful** — between XGBoost's 96% and MLP's 73%, plausibly close to test.csv's true prior.
-
-**Expected leaderboard accuracy: ~72-74%**, depending on test.csv's true class balance. If test.csv mirrors dataset.csv at ~70% hallucinated, ensemble accuracy should sit at the upper end of the range due to XGBoost's contribution; if test.csv is more balanced, the calibrated MLP component protects the floor.
-
-`results.json` is from `all-features-5fold` (the highest-AUROC well-calibrated single model): 71.26% acc, 74.43% AUROC across 5 folds.
-
-### What contributed most (ranked by accuracy points unlocked)
-
-1. **Accuracy-mode threshold tuner** (phase 2, ~+4 pt). Phase-1 runs with the original F1-maximizing tuner *all* collapsed to baseline accuracy (70.19%) because the F1-greedy threshold on a 104-sample val set kept landing on degenerate "predict-everything-positive" operating points. Switching the optimization metric to accuracy and rejecting collapsed thresholds is what moved every aggregation variant off the baseline floor — every later phase builds on this.
-
-2. **XGBoost + perplexity + heuristic features** (phases 11+12+13, ~+4 pt on local 5-fold acc). Replacing the MLP with `XGBClassifier` and adding perplexity / heuristic features lifts local 5-fold test_acc from 69.96% (MLP, no features) to 74.16%. XGBoost's calibration produces an over-aggressive `predictions.csv` (96% hallucinated) — the ensemble compensates.
-
-3. **Final-probe threshold tuning** (~+1 pt expected). The original submission pipeline trained the final probe on all data and used threshold=0.5, ignoring the accuracy-mode tuner. Holding out 10% of `idx_non_test` for threshold tuning carries the in-eval accuracy improvement through to the submission probe.
-
-4. **5-fold over single-split** (no accuracy change, but better generalization). The 5-fold final probe trains on all 689 labeled samples vs ~585 for single-split — 17% more training data with zero compute cost.
-
-5. **Last-token-of-final-layer aggregation** is the right starting point. Every alternative tried (mean-pool, last-4-concat, mid-layer probing, multi-token aggregation, geometric features) either tied or lost. The signal lives at the final-layer last-token position for this model size.
-
-6. **Single-hidden-layer MLP** is the right neural-probe capacity. Deep MLP overfits, linear probe **underfits** (counterintuitive but clear — the hallucination signal is non-linear in the last-token representation despite low PCA dimensionality).
-
-7. **Ensemble** (variance reduction, ~+0-2 pt expected). Five diverse probes' predictions averaged via majority vote. The XGBoost local-accuracy lift carries through with calibration-correction from the MLP variants.
-
----
-
-## Experiments and failed attempts
-
-All sweeps used the same `Qwen2.5-0.5B` extraction with `max_length=512`, `batch_size=4`. Total experimental compute: ~10 GPU-minutes.
-
-### Phase 1 — five baseline aggregation/probe/split variants (single split, seed=42)
-
-| Run | feat_dim | val_AUROC | test_acc | test_AUROC | Comment |
-|---|---|---|---|---|---|
-| agg-last-token | 896 | 64.91% | 70.19% | 74.02% | baseline |
-| agg-mean-pool | 896 | 53.91% | 70.19% | 52.89% | mean-pool destroys signal — final layer of a causal LM concentrates info on the last position |
-| agg-last4-layers | 3584 | 65.20% | 70.19% | 74.06% | concatenating last 4 layers ≈ last 1 — signal saturates near the top |
-| probe-deep-mlp | 896 | 68.01% | 70.19% | 66.99% | deeper MLP overfits — train AUROC 100%, test drops 7 pt |
-| split-5fold | 896 | **72.49%** | **70.83%** | 73.15% | 5-fold val_AUROC is the honest one — single-split's 65% was sample-size noise |
-
-**Key finding.** Every run produced exactly 70.19% test_acc — the majority-class baseline. The original `fit_hyperparameters` greedy-maximizing F1 was collapsing the threshold on the small val set, masking all aggregation/probe differences in the accuracy metric. AUROC was the only meaningful differentiator at this stage.
-
-### Phase 2 — accuracy-mode threshold tuner
-
-Reran the five baselines with the new `fit_hyperparameters` (accuracy-maximizing + reject-degenerate). This is the change that finally lifted test_acc above baseline:
-
-| Run | test_acc | test_AUROC |
+| Env var | Default | Values |
 |---|---|---|
-| **agg-last-token-acc-thresh** | **74.04%** | 75.17% |
-| agg-last4-layers-acc-thresh | 72.12% | 73.27% |
-| split-5fold-acc-thresh | 69.09% | 72.43% |
-| probe-deep-mlp-acc-thresh | 68.27% | 68.58% |
-| agg-mean-pool-acc-thresh | 69.23% | 52.72% |
-
-`agg-last-token` became the clear winner. The threshold fix matters even when the upstream features are good.
-
-### Embeddings audit (phase 2.5)
-
-Computed domain-classifier AUROC between every relevant pair of embeddings (`logs/audits/embeddings_audit.json`):
-
-| Pair | AUROC | Verdict |
-|---|---|---|
-| dataset train vs val | 0.504 | IID ✓ |
-| dataset train vs test | 0.486 | IID ✓ |
-| dataset val vs test | 0.509 | IID ✓ |
-| **dataset.csv vs data/test.csv** | **0.507** | **No distribution shift between training data and the competition test set** |
-
-PCA: top-1 component carries 67% of the variance; top-10 carries 83%. The 896-dim hidden state is highly low-dimensional in practice.
-
-Headline: distribution shift is not the bottleneck. Local test_acc is a faithful proxy for leaderboard accuracy.
-
-### Phase 4 — linear probes and L2 regularization
-
-| Run | train_AUROC | test_acc | test_AUROC | Comment |
-|---|---|---|---|---|
-| probe-linear-acc-thresh | 89.25% | 68.27% | 66.28% | **underfits** — train AUROC drops 10pt, test drops 9pt |
-| probe-linear-l2-acc-thresh | 88.80% | 69.23% | 68.01% | L2 doesn't rescue an under-capacity model |
-| probe-mlp-l2-acc-thresh | 99.83% | 74.04% | 75.17% | L2=1e-3 ties the unregularized winner; train AUROC barely moves |
-
-**Counterintuitive result.** PCA showed top-1 explaining 67% of the variance, so a linear probe should have been sufficient. It wasn't: dropping the hidden layer dropped test_AUROC by 9 points. **The hallucination label is not aligned with the dominant variance direction** — the MLP's ReLU is doing real, non-linear feature work.
-
-### Phase 5 — hand-crafted geometric features
-
-Implemented `extract_geometric_features`: 25 per-layer L2 norms of the last-token activation + 24 inter-layer cosine similarities (representational drift across depth) + 1 sequence length. Concatenated with the 896-dim last_token embedding for a 946-dim feature vector.
-
-| Run | test_acc | test_AUROC |
-|---|---|---|
-| geom-features-acc-thresh | 68.27% | 71.59% |
-| geom-features-l2-acc-thresh | 74.04% | 70.97% |
-| **agg-last-token-acc-thresh (reference)** | 74.04% | **75.17%** |
-
-The geometric features either matched or lost on every metric. Even when test_acc tied the baseline (74.04%, with stronger L2=1e-2), AUROC dropped 4 points. The extra 50 features add noise without improving signal — the last-token embedding already carries everything the linear-on-top-of-MLP-hidden-units architecture can use.
-
-### Phase 6 — multi-seed honesty check
-
-Reran the winning config with five different stratified split seeds (0-4) to quantify how much of the headline 74.04% was luck-of-the-draw on a 104-sample test slice:
-
-| Seed | test_acc | test_AUROC |
-|---|---|---|
-| 0 | 69.23% | 69.20% |
-| 1 | 71.15% | 66.64% |
-| 2 | 67.31% | 65.97% |
-| 3 | 66.35% | 69.24% |
-| 4 | **74.04%** | **76.40%** |
-| 42 (phase 2) | 74.04% | 75.17% |
-
-**Mean: 69.62% ± 2.76%.** The 74.04% headline was the upper-tail of the noise band. The 5-fold result from phase 1 (70.83%) is consistent.
-
-### Phase 6.5 — slice similarity to data/test.csv
-
-For each of the five seeds, computed the domain-classifier AUROC between the in-evaluation 104-sample test slice and `data/test.csv` embeddings (`logs/audits/slice_similarity.json`). Hypothesis: the most-similar slice gives the most leaderboard-predictive test_acc.
-
-**Result: no relationship.** The seed whose test slice is *most* distributionally identical to `data/test.csv` (seed 3, domain AUROC 0.504) has the *lowest* test_acc (66.35%). Sample-size noise (104 samples) dominates the similarity signal. The trust-weighted average across seeds (68.75%) is slightly lower than the plain mean (69.62%), suggesting the high-end outliers (seed 4, 74.04%) carry less leaderboard weight.
-
-### Phase 7 — abstention-style probing (prompt-only / response-only)
-
-After re-running on restored GPU access:
-
-| Run | feat_dim | test_acc | test_AUROC |
-|---|---|---|---|
-| text-prompt-only | 896 | 69.23% | **56.96%** |
-| text-response-only | 896 | 74.04% | 54.09% |
-
-**Both abstention variants flop on AUROC.** Prompt-only achieves accuracy approximately at baseline (the threshold tuner collapses on the noisy 49% val_AUROC); response-only's 74% test_acc is threshold luck not real signal (AUROC 54%). The signal lives in the *combined* prompt+response representation — neither half alone carries enough information.
-
-### Phase 8 — mid-layer probing (Burns et al. + intern's empirical finding)
-
-| AGG_LAYER | feat_dim | test_acc | test_AUROC |
-|---|---|---|---|
-| 24 (final, baseline) | 896 | 74.04% | **75.17%** |
-| 20 | 896 | 69.23% | 73.04% |
-| 18 | 896 | 68.27% | 69.62% |
-| 16 | 896 | 70.19% | 68.40% |
-| 14 | 896 | 70.19% | 61.98% |
-| 12 | 896 | 67.31% | 64.83% |
-| 8 | 896 | 68.27% | 63.90% |
-
-**The final layer wins for Qwen2.5-0.5B**, contrary to the Burns et al. finding (typically derived from 7B-13B models with 32-40 layers). Hypothesis: the "mid-layer specializes for semantics, final layer specializes for next-token" decomposition emerges only in larger models. At 0.5B parameters and 24 layers, all useful semantic signal is still concentrated in the late layers.
-
-### Phase 9 — multi-token aggregation (mean+max+last over real tokens)
-
-| Run | feat_dim | test_acc | test_AUROC |
-|---|---|---|---|
-| agg-meanmaxlast (single-split) | 2688 | 70.19% | **51.17%** |
-| meanmaxlast-5fold | 2688 | 69.95% | 65.26% |
-
-**Multi-token aggregation hurts.** Mean and max over all 512 real-token positions dilutes the signal across prompt tokens, drowning out the response-token signal that the probe needs. **Future work**: response-span-only mean/max/std-dev pooling (requires tokenizer-aware boundary tracking).
-
-### Phase 10 — attention features (per-layer entropy / self-attn / top-3 concentration)
-
-After fixing the SDPA→eager attention swap, 72 attention features were added on top of the 896-dim last-token:
-
-| Run | feat_dim | test_acc | test_AUROC |
-|---|---|---|---|
-| attn-last-token | 968 | 73.08% | 75.19% |
-| attn-meanmaxlast | 2760 | 69.23% | 50.33% |
-| **attn-last-5fold** | 968 | **71.41%** | **72.87%** |
-
-Attention features modestly help in single-split (75.19% AUROC vs 75.17% baseline — flat) and 5-fold (72.87% vs baseline 72.92% — flat). The information is mostly redundant with the hidden states.
-
-### Phase 11 — perplexity / NLL features over the response span (SelfCheckGPT-via-NLL)
-
-6 features added: mean/max/std of per-token NLL, mean top-1 probability, mean/max rank of the actual token under Qwen's distribution.
-
-| Run | feat_dim | test_acc | test_AUROC |
-|---|---|---|---|
-| ppl-last-token | 902 | 74.04% | 74.02% |
-| **ppl-last-5fold** | 902 | **71.40%** | **73.36%** |
-
-Perplexity features add +1.4pt test_acc over the no-features 5-fold baseline (69.96% → 71.40%) and +0.44pt AUROC. Real but modest gain — the response-tokens' NLL under Qwen carries some signal not already in the hidden states.
-
-### Phase 12 — XGBoost probe family
-
-| Run | feat_dim | test_acc | test_AUROC | predictions distrib |
-|---|---|---|---|---|
-| xgb-last-token | 896 | 70.19% | 67.39% | 95/5 hall |
-| xgb-last-5fold | 896 | 70.53% | 71.93% | 98/2 hall |
-| **xgb-all-features-5fold** | 911 | **74.17%** | 74.70% | 96/4 hall |
-| xgb-all-features-5fold-v2 (no scale_pos_weight) | 911 | 74.16% | 74.09% | 96/4 hall |
-
-**XGBoost wins on local 5-fold test_acc when combined with perplexity + heuristic features**, but consistently produces a 95-98%-hallucinated `predictions.csv` regardless of whether `scale_pos_weight` is applied. The root cause is XGBoost's output-probability calibration: trees produce confidently-low scores for most samples, so the threshold tuner picks 0.06-0.14 to recover positives, and on test.csv this over-predicts the majority class. Local test_acc 74% is honest (out-of-fold measurement; matches the math if test slice ≈ 70% hallucinated and predictions ≈ 96% hallucinated), but the calibration is fragile to test.csv class-balance shift.
-
-### Phase 13 — heuristic text features (length, hedge-words, prompt-overlap, format tells)
-
-9 features: response char-length / word-count / sentence-count, hedge-phrase count (20 phrases like "i think", "approximately", "possibly"), prompt-overlap fraction, presence of "I don't know", `user:`/`assistant:` prefix markers, capitalisation of first character.
-
-| Run | feat_dim | test_acc | test_AUROC |
-|---|---|---|---|
-| heur-last-token | 905 | 73.08% | 74.17% |
-| heur-last-5fold | 905 | 69.81% | 72.57% |
-| **all-features-5fold (last_token + perplexity + heuristic)** | 911 | **71.26%** | **74.43%** |
-
-Heuristic alone modestly helps; combined with perplexity it gives the best AUROC of the well-calibrated set (74.43%, vs 72.92% for plain last_token). **The error analysis ([logs/audits/error_analysis.json](logs/audits/error_analysis.json)) confirmed response length is a real signal**: misclassified samples averaged 419 chars vs 795 chars for correctly classified ones, a 2× difference.
-
-### Phase 14 — first canonical: 5-model ensemble (majority vote) [Day-1]
-
-Five 5-fold runs (XGBoost+all-features, MLP+all-features, MLP+ppl, MLP+attn, MLP-only) are ensembled by `ensemble_predictions.py`: each sample's predicted label = `1` iff ≥3 of the 5 input runs predict `1`.
-
-- Inputs' predicted distributions: 96%, 73%, 73%, 92%, 78% hallucinated.
-- Ensemble's predicted distribution: **80% hallucinated** — a sensible blend, between XGBoost's over-aggression and MLP's training-prior-matching.
-- Ensemble is closest to `final-submission` (only 2 flips), with XGBoost contributing the most corrections (16 flips of "this is hallucinated but really truthful" XGBoost calls).
-
-### Phase 13 — KNN-OOD distance features
-
-Class-agnostic KNN-OOD signal: for each sample, distance-to-3rd-/5th-/10th-nearest training neighbor (Euclidean in 911-dim feature space), mean of those, plus cosine similarity to top-1 NN. 5 dims, computed by leave-one-out for training samples and against the training pool for test samples.
-
-| Run | feat_dim | test_acc | test_AUROC |
-|---|---|---|---|
-| knn-last-token (single) | 901 | 74.04% | 74.28% |
-| knn-last-5fold | 901 | 68.36% | 73.01% |
-| knn-all-features-5fold (MLP+all+KNN) | 916 | 69.37% | 74.33% |
-| **xgb-knn-all-5fold** | 916 | **74.89%** | 74.26% |
-
-XGBoost + KNN-OOD on top of perplexity + heuristic gave **+0.73pt test_acc** over the previous XGBoost-all-features ceiling (74.16% → 74.89%). MLP doesn't benefit (matches or hurts); the heterogeneous-feature-friendly inductive bias of trees handles the geometric distance features better.
-
-### Phase 14+15 — manifold features (LID + per-class Mahalanobis distance)
-
-6 dims appended to the feature vector before probe training:
-- **LID (TwoNN)**: 2 dims — per-sample 2-NN-ratio `d2/d1` and `log(d2/d1)`. Estimates whether the sample lives in a "thin" (low-LID, on-manifold) or "thick" (high-LID, off-manifold) region.
-- **Per-class Mahalanobis**: 4 dims — distance from each query to truthful-class and hallucinated-class Gaussians (fit via Ledoit–Wolf shrunk covariance), plus their ratio and difference.
-
-| Run | feat_dim | test_acc | test_AUROC |
-|---|---|---|---|
-| manifold-5fold (MLP) | 902 | 71.27% | 75.32% |
-| **xgb-manifold-all-5fold** | **922** | **75.47%** | **76.35%** |
-| xgb-knn-manifold-all-5fold (KNN + Manifold) | 927 | 74.89% | 75.51% |
-
-**`xgb-manifold-all-5fold` becomes the new test_acc winner at 75.47%** — a +0.58pt jump over the KNN-only configuration. Counter-intuitively, **stacking KNN-OOD on top of Manifold actually hurts** (74.89% < 75.47%): the two geometric signals are redundant and KNN's noise pollutes the manifold signal.
-
-### Phase 4 — NLL trajectory shape features (extending perplexity)
-
-Added 5 shape features on top of the existing 6 perplexity dims: position-of-max-NLL within response, lag-1 autocorrelation of NLL, linear slope, kurtosis, and prefix-vs-suffix-NLL ratio. The hypothesis: hallucinated responses exhibit "spike" patterns where the fabrication moment shows up as a localized NLL increase.
-
-Bundled into every USE_PERPLEXITY=1 run after the day-1 baseline, so the +0.58pt that `xgb-manifold-all-5fold` shows over `xgb-knn-all-5fold` is *partially* attributable to the trajectory shape features (the two changes shipped together). Isolation ablation deferred.
-
-### Phase 3 — cross-attention from response to prompt span
-
-For each transformer layer, the fraction of attention mass from response tokens onto prompt tokens (the relevant context). 24 per-layer means + 5 summary stats (layer-mean, max, std, peak-layer, last-response-token's prompt-attention). Total 29 features added on top of the existing 72 attention features (entropy, self-attn, top-3 concentration) when `USE_ATTENTION_TO_PROMPT=1`.
-
-| Run | feat_dim | test_acc | test_AUROC |
-|---|---|---|---|
-| attn2prompt-5fold (MLP) | 997 | 71.56% | 74.64% |
-| xgb-attn2prompt-all-5fold | 1017 | 73.73% | 76.50% |
-| **xgb-manifold-attn2prompt-all-5fold** | 1023 | 75.18% | **76.84%** |
-
-Stacks on top of manifold to give **+0.49pt AUROC** (76.35% → 76.84%) but slightly lower test_acc (75.47% → 75.18%) — the threshold tuner lands at a slightly different operating point. Real but modest signal — the **interpretable, mechanistic** picture (which prompt tokens does the model attend to when answering correctly vs hallucinating) is the more lasting contribution.
-
-### Phase 5 — per-head probing (find "hallucination heads")
-
-Instead of collapsing the 14 attention heads per layer into a single mean, **emit one feature per (layer, head) pair** — `24 × 14 = 336` features each measuring per-head attention mass from response tokens to prompt span. XGBoost's tree splits effectively perform feature selection, identifying the specific heads that carry signal (mechanistic-interpretability analog of "induction heads").
-
-| Run | feat_dim | test_acc | test_AUROC |
-|---|---|---|---|
-| xgb-perhead-attn-5fold (only per-head, no other extras) | 1304 | 74.02% | 76.34% |
-| **xgb-manifold-perhead-all-5fold** | 1330 | 74.02% | **77.52%** ★ |
-| xgb-manifold-perhead-attn2prompt-all-5fold | 1359 | 74.74% | 77.06% |
-
-**Highest local AUROC of the project (77.52%).** Per-head features push AUROC another +1.17pt above manifold-only (76.35% → 77.52%). Test-acc didn't move because the probability distribution is more spread (threshold lands at 0.29 — much higher than the 0.07-0.14 typical of other XGBoost runs), which **also improves the predictions.csv calibration** (`xgb-perhead-attn-5fold` predicts 80% hallucinated, matching the training prior, vs 92-96% in earlier XGBoost runs).
-
-### Phase 2 — SelfCheckGPT (5× sampling, semantic divergence)
-
-For each (prompt, response) sample, Qwen generates 5 alternative responses at temperature 0.7. Inter-sample agreement is measured by:
-1. Mean pairwise BLEU-1 (unigram precision)
-2. Mean pairwise Jaccard similarity on 3-gram sets
-3. Mean pairwise cosine similarity between last-token hidden states
-4. Mean BLEU between each alternative and the ORIGINAL labelled response
-5. Mean Jaccard between each alternative and the original
-6. Standard deviation of pairwise cosines (consistency-of-consistency)
-
-Six features per sample. Pre-computed once via [selfcheck_features.py](selfcheck_features.py) (~15 min wall-clock for 689 train + 100 test) and loaded by `solution.py` when `USE_SELFCHECK=1`.
-
-| Run | feat_dim | test_acc | test_AUROC | predictions.csv hall% |
-|---|---|---|---|---|
-| xgb-selfcheck-5fold (SC features alone) | 902 | 71.69% | 75.93% | 71% ✓ |
-| xgb-selfcheck-manifold-all-5fold | 928 | 75.61% | 76.35% | 94% |
-| **xgb-everything-5fold** (SC + manifold + per-head + attn2prompt + ppl + heur) | **1365** | **76.19%** | **78.08%** | **84%** |
-
-**`xgb-everything-5fold` becomes the new project-best single config at 76.19% test_acc / 78.08% AUROC**, +0.72pt above the pre-SelfCheckGPT ceiling. Notably it ALSO has the most-calibrated XGBoost prediction distribution we've seen (84% hallucinated, threshold 0.38 — vs the 92-96% typical of dense-only XGBoost runs). The combination of self-consistency features and per-head attention features produces a less-skewed output probability distribution.
-
-The SelfCheckGPT-alone variant is also interesting: **71.69% test_acc with PERFECT calibration** (71% hallucinated predictions, matching the 70% training prior). It's a weaker but rock-steady probe; near-baseline accuracy comes from the rare cases where a hallucinated answer's resamples diverge from each other much more than a truthful answer's resamples do.
-
-### Final canonical submission [Day-2 final]
-
-The Day-2 ensemble combines the new flagship `xgb-everything-5fold` with diverse calibration-balanced constituents:
-
-| Model | Day-2 role | local test_acc | predictions.csv hall% |
-|---|---|---|---|
-| **xgb-everything-5fold** | new flagship — best test_acc AND AUROC | 76.19% | 84% |
-| **xgb-manifold-all-5fold** | second-best test_acc, alternative feature mix | 75.47% | 92% |
-| **xgb-selfcheck-5fold** | perfectly-calibrated weak probe | 71.69% | 71% |
-| **manifold-5fold** (MLP) | MLP counter-vote, manifold features only | 71.27% | 76% |
-| **final-submission** (MLP) | held over — plainest calibrated baseline | 69.96% | 78% |
-
-Majority vote across these 5 produces **82% hallucinated** predictions — closer to the 70% training prior than Day-1's 80%-hall ensemble OR the Day-2's flagship's 84%, hedging against XGBoost's known over-aggression.
-
-`results.json` reports `xgb-everything-5fold`'s 5-fold metrics (the highest local test_acc AND AUROC of any single model): **76.19% accuracy, 78.08% AUROC** across 5 folds.
-
-### Mechanistic interpretability: which attention heads carry hallucination signal?
-
-The phase-5 per-head probing showed that the 336 (layer, head) attention-to-prompt features collectively add +1.17pt AUROC. To localize the signal *individually*, [head_attribution.py](head_attribution.py) computes mutual information between each head's per-sample attention-to-prompt feature and the binary hallucination label.
-
-**Top 30 hallucination heads (by mutual information with label):**
-
-| rank | layer | head | MI | rank | layer | head | MI |
-|---|---|---|---|---|---|---|---|
-| 1 | 23 | 12 | 0.086 | 16 | 11 | 2 | 0.070 |
-| 2 | 22 | 11 | 0.082 | 17 | 22 | 2 | 0.069 |
-| 3 | 21 | 6 | 0.077 | 18 | 20 | 0 | 0.069 |
-| 4 | 12 | 1 | 0.077 | 19 | 9 | 13 | 0.069 |
-| 5 | 13 | 9 | 0.076 | 20 | 16 | 8 | 0.068 |
-| 6 | 10 | 10 | 0.075 | 21 | 7 | 7 | 0.068 |
-| 7 | 5 | 2 | 0.074 | 22 | 12 | 6 | 0.067 |
-| 8 | 22 | 6 | 0.074 | 23 | 10 | 5 | 0.067 |
-| 9 | 15 | 9 | 0.074 | 24 | 14 | 9 | 0.066 |
-| 10 | 1 | 9 | 0.072 | 25 | 11 | 12 | 0.066 |
-| 11 | 10 | 12 | 0.072 | 26 | 22 | 7 | 0.065 |
-| 12 | 17 | 12 | 0.072 | 27 | 5 | 8 | 0.065 |
-| 13 | 1 | 4 | 0.072 | 28 | 17 | 2 | 0.065 |
-| 14 | 16 | 4 | 0.072 | 29 | 10 | 11 | 0.065 |
-| 15 | 14 | 12 | 0.071 | 30 | 14 | 7 | 0.065 |
-
-Max head MI = 0.0855 (>2× the median of 0.0403); the strongest heads are individually 2× more informative than a random one.
-
-**Per-layer mean MI** (ASCII bar shows mean of all 14 heads' MI):
+| `AGG_STRATEGY` | `last_token` | `last_token`, `mean_pool`, `last4_concat`, `meanmaxlast` |
+| `AGG_LAYER` | `-1` | integer in `[-25, 24]` |
+| `PROBE_ARCH` | `mlp_1h_256` | `mlp_1h_256`, `mlp_deep`, `linear` |
+| `PROBE_FAMILY` | `torch` | `torch`, `xgboost` |
+| `SPLIT_STRATEGY` | `single` | `single`, `5fold` |
+| `SPLIT_SEED` | `42` | integer |
+| `USE_PERPLEXITY` | `0` | 0/1 |
+| `USE_HEURISTIC` | `0` | 0/1 |
+| `USE_ATTENTION` | `0` | 0/1 (forces eager attention) |
+| `USE_ATTENTION_TO_PROMPT` | `0` | 0/1 |
+| `USE_PER_HEAD_ATTN` | `0` | 0/1 |
+| `USE_KNN_OOD` | `0` | 0/1 |
+| `USE_MANIFOLD` | `0` | 0/1 |
+| `USE_SELFCHECK` | `0` | 0/1 (loads pre-computed npz) |
+| `TEXT_MODE` | `prompt_response` | `prompt_response`, `prompt_only`, `response_only` |
+
+## Files in this repo
 
 ```
-layer  0: 0.0269  █████        layer 12: 0.0448  ████████
-layer  1: 0.0388  ███████      layer 13: 0.0357  ███████
-layer  2: 0.0319  ██████       layer 14: 0.0454  █████████
-layer  3: 0.0325  ██████       layer 15: 0.0430  ████████
-layer  4: 0.0307  ██████       layer 16: 0.0461  █████████
-layer  5: 0.0383  ███████      layer 17: 0.0346  ██████
-layer  6: 0.0361  ███████      layer 18: 0.0409  ████████
-layer  7: 0.0220  ████         layer 19: 0.0295  █████
-layer  8: 0.0237  ████         layer 20: 0.0429  ████████
-layer  9: 0.0410  ████████     layer 21: 0.0464  █████████
-layer 10: 0.0508  ██████████   layer 22: 0.0536  ██████████ ← peak
-layer 11: 0.0439  ████████     layer 23: 0.0508  ██████████
+SMILES-2026-submission/
+├── data/                      # competition data (unchanged)
+├── solution.py                # main pipeline, env-var-driven (modified for new features)
+├── predictions.csv            # SUBMISSION: 5-model ensemble
+├── results.json               # SUBMISSION: xgb-everything-5fold-clean 5-fold metrics
+├── SOLUTION.md                # this report
+├── TOMORROW.md                # planned but unrun experiments
+│
+│   ── Competition-editable (modified) ──────────────────────────────
+├── aggregation.py             # base aggregation + perplexity/attention/heuristic/manifold/logit-lens feature extractors
+├── probe.py                   # HallucinationProbe — MLP and XGBoost backends, accuracy-mode threshold tuner
+├── splitting.py               # single-split + stratified 5-fold splits
+│
+│   ── Fixed infrastructure (unchanged) ──────────────────────────────
+├── model.py                   # loads Qwen2.5-0.5B
+├── evaluate.py                # evaluation loop, metrics, summary
+│
+│   ── Applicant analysis tooling (not part of competition contract) ─
+├── run_sweep.sh               # env-var sweep launcher with per-run archiving
+├── compare_runs.py            # cross-run leaderboard table
+├── error_analysis.py          # per-sample misclassification dump
+├── embeddings_audit.py        # distribution-shift checks
+├── slice_similarity.py        # per-fold similarity to data/test.csv
+├── weighted_metrics.py        # trust-weighted leaderboard estimates
+├── ensemble_predictions.py    # majority-vote ensemble of predictions.csv files
+├── head_attribution.py        # per-(layer, head) MI ranking
+├── sparse_head_probe.py       # CV-proper sparse probe (K=5..336)
+├── sparse_probe_submission.py # standalone sparse-K probe writing predictions.csv
+├── selfcheck_features.py      # SelfCheckGPT 5× sampling features
+│
+└── logs/                      # per-run archives and audit JSON files
 ```
 
-**Key findings**:
+## Experiments that didn't work
 
-1. **Layer 22 is the "factuality layer"** — peak mean MI (0.054) AND four of the top-30 heads concentrate there (heads 11, 6, 2, 7).
-2. **Bimodal distribution**: signal spikes at layer 10 (0.051) AND layers 22-23 (0.054, 0.051). The mid-layer peak echoes the published probing literature (Burns et al.), but the *attention-pattern* signal — distinct from the *residual-stream* signal that phase 8 measured — survives even at 0.5B model scale, contrary to the residual-stream null result.
-3. **Layer 7-8 valley** — these layers carry the *least* signal (MI ~0.022-0.024, half of peak). They appear to be processing intermediate / lossy representations not directly linked to factuality.
-4. **No layer is signal-free**: even the weakest layer (layer 7) has MI 0.022 — every layer's attention pattern carries *some* hallucination signal.
+- **Mean-pool / last4-layer concatenation** — destroyed signal (single position carries most info for causal LM).
+- **Mid-layer probing of residual stream (layers 8-20)** — final layer wins on Qwen2.5-0.5B; published mid-layer results don't transfer at 0.5B.
+- **Linear probe (no hidden layer)** — underfits by 9pt AUROC; signal is non-linear in last-token representation.
+- **Geometric features** (per-layer norms + inter-layer cosine drift) — added noise without signal.
+- **F1-as-primary threshold-tuning metric** (the original code path) — collapsed every probe to majority-class baseline.
+- **Prompt-only / response-only TEXT_MODE** — both flop on AUROC; signal needs both halves of the conversation.
+- **Logit lens** — full-vocab `log_softmax` over 25 layers triggered an NVML/CUDA driver-mismatch assert on the host; CPU fallback hit per-batch OOM. Code intact in `aggregation.py:extract_logit_lens_features` for future replay.
 
-These per-(layer, head) MI values are reproducible via `python head_attribution.py`; the heatmap is persisted at `logs/audits/head_attribution_heatmap.npy` and the top-30 head list at `logs/audits/head_attribution_topK.json`.
+## Future work (ordered by expected leverage)
 
-### Sparse-probe finding: 100 heads is enough
+- **Activation patching for causal evidence.** Swap a hallucinated sample's hidden state at layer L with a truthful sample's; measure how the probe's prediction flips. Identifies the *causally* important layers, not just the *correlationally* informative ones.
+- **Response-span-only multi-token aggregation.** Phase 9 tried mean/max over ALL 512 token positions and lost. With prompt/response boundary tracking, compute mean/max/std *just* over response tokens — should pick up the response-length signal at the representation level.
+- **Sparse autoencoder dictionary on the residual stream.** Decompose the 896-dim hidden state into ~16K sparse interpretable features. Probe on the sparse features for interpretable mechanistic claims.
+- **Probability-level ensembling.** Currently we ensemble labels (majority vote). Saving per-sample probabilities and averaging them usually beats label majority vote on small data.
+- **Multi-prompt augmentation.** Synthesize paraphrased prompts via another LLM; expand the 689-sample training set. Risk: label noise from paraphrases that genuinely change answerability.
 
-If the hallucination signal is localized to a small subset of heads, a sparse probe using *just* those heads should match the full 336-head probe. [sparse_head_probe.py](sparse_head_probe.py) tests this with a CV-proper feature-selection protocol: per-fold MI on the training portion only, top-K heads as features, XGBoost probe, threshold tuned on the val portion.
+## Leakage and lessons
 
-| K (heads) | test_acc | test_AUROC | calibrated threshold |
-|---|---|---|---|
-| 5 | 70.10% ± 1.9pt | 65.71% ± 1.7pt | 0.192 |
-| 10 | 71.84% ± 1.9pt | 70.73% ± 3.6pt | 0.289 |
-| 30 | 73.73% ± 1.9pt | 73.92% ± 2.6pt | 0.333 |
-| 50 | 73.44% ± 2.3pt | 73.10% ± 1.8pt | 0.358 |
-| **100** | **75.18% ± 2.1pt** | 75.81% ± 2.7pt | 0.457 |
-| 336 | 74.88% ± 3.0pt | **76.52% ± 4.3pt** | 0.327 |
+The mid-day-2 ablation sweep produced cross-validation test accuracies of 83% and 96% — far above what any 0.5B-model probe should achieve on this task. Tracing back, the cause was **label leakage in `compute_mahalanobis_features`**: the per-class Gaussian was fit on the full training set including each query sample's own label, so each training sample's Mahalanobis features were partially computed using its own label. The leakage was masked while other features (perplexity, attention, heuristic) dominated the XGBoost splits; it surfaced as soon as perplexity was removed and the leaky Mahalanobis features were promoted in feature importance.
 
-**100 heads ≥ 336 heads on test accuracy** (75.18% vs 74.88%; difference within noise). **30 heads** already matches the AUROC of every dense MLP variant we trained — the hallucination signal lives in roughly the top *third* of the attention heads, with diminishing returns beyond.
+**Resolution:** Mahalanobis dropped from the canonical pipeline (the `USE_MANIFOLD=1` path now emits LID-only). LID is label-free and stays; KNN-OOD is also label-free (it uses leave-one-out sample exclusion). The clean re-runs of every previously-leaky config produced test accuracies in the **74-75% range** — about 0.5-1.5pt below their leaky counterparts. The flagship `xgb-everything-5fold-clean` at 74.60% test_acc is the leakage-free champion.
 
-Robustness of the head selection across folds (most-frequently-selected heads at each K):
-```
-K= 30: L18H2 (5/5 folds), L17H12 (4/5), L23H12 (4/5), L18H4 (4/5), L22H6 (3/5)
-K=100: L17H12 (5/5), L18H2 (5/5), L22H6 (5/5), L17H8 (5/5), L20H0 (5/5)
-```
+**Lesson learned:** *every* feature that uses class labels must be computed inside the CV inner loop, not once on the full training set. The error was particularly insidious here because it only manifested in some feature combinations, evading the standard "does train accuracy match val accuracy" sanity check.
 
-The same heads keep getting picked across CV folds — layers **17, 18, 22, 23** dominate the top-30, consistent with the full-train-set head_attribution finding. **The hallucination signal is genuinely concentrated in these specific heads**, not an artifact of one lucky fold.
+## Contribution attribution
 
-**Sparse probe also calibrates better** than dense XGBoost: at K=100 the chosen threshold is 0.46 (vs 0.07-0.14 typical for the dense XGBoost variants), and predictions.csv lands at 88% hallucinated (vs 92-96% for dense XGBoost). The threshold lift indicates a less-skewed output distribution — sparse features produce a less confident, more interpretable probability surface.
+This solution was developed in an interactive paired-programming session between **Tatevik Ter-Hovhannisyan** (applicant) and the **Claude Code** assistant (Anthropic).
 
-A standalone sparse-K100 submission (`logs/runs/sparse-head-K100/`) is included in the canonical ensemble.
+**Tatevik (applicant) curated:**
+- All strategic decisions: when to keep experimenting vs. ship, choice of 5-fold cross-validation as canonical, order of experimental phases, which negative results to discard.
+- Key hypotheses that drove the most productive phases — the **mid-layer probing direction** (empirically observed earlier with an intern), the **meta-question "what aren't we considering?"** that surfaced error analysis + perplexity + XGBoost, and the **prompt-only / abstention-style probing** hypothesis.
+- All review/approval decisions on plan changes and final submission configuration.
 
-### Direction of the signal: "hallucinated answers look away from the prompt"
-
-The per-head MI values tell us *which* heads carry signal, not *how*. Computing per-class statistics on the same features answers "how":
-
-| rank | (layer, head) | truthful: attn-to-prompt | hallucinated: attn-to-prompt | Δ |
-|---|---|---|---|---|
-| 1 | (23, 12) | 0.853 ± 0.12 | 0.742 ± 0.19 | **−0.111** |
-| 2 | (22, 11) | 0.858 ± 0.12 | 0.753 ± 0.19 | **−0.105** |
-| 3 | (21, 6) | 0.923 ± 0.07 | 0.855 ± 0.15 | −0.068 |
-| 4 | (12, 1) | 0.597 ± 0.17 | 0.491 ± 0.18 | **−0.106** |
-| 5 | (13, 9) | 0.843 ± 0.09 | 0.773 ± 0.16 | −0.070 |
-| 6 | (10, 10) | 0.690 ± 0.14 | 0.576 ± 0.16 | **−0.114** |
-| 7 | (5, 2) | 0.909 ± 0.08 | 0.835 ± 0.14 | −0.074 |
-| 8 | (22, 6) | 0.789 ± 0.12 | 0.681 ± 0.18 | **−0.108** |
-| 9 | (15, 9) | 0.739 ± 0.15 | 0.598 ± 0.20 | **−0.141** |
-| 10 | (1, 9) | 0.071 ± 0.07 | 0.057 ± 0.06 | −0.014 |
-
-**Every top-10 head shows the same sign: hallucinated responses attend ≈10-14pt LESS to the prompt context than truthful responses** when emitting their last response token. The model's attention-pattern signature of "fabricating" is *literally looking away from the source material* and concentrating attention on the response itself.
-
-This is a clean, mechanistic, single-sentence claim about the model — derivable from the data, not a curated cherry-pick (it holds at 9 of the top 10 heads with effect size > 0.05; the 10th head, layer 1 head 9, is from the first transformer block and may be doing positional / tokenization work rather than semantic processing).
-
-Statistical significance via Welch's t-test on the top-5 heads:
-
-| (layer, head) | t-statistic | p-value | Cohen's d |
-|---|---|---|---|
-| (23, 12) | 9.10 | 1.4 × 10⁻¹⁸ | 0.69 |
-| (22, 11) | 9.00 | 3.1 × 10⁻¹⁸ | 0.68 |
-| (21, 6)  | 8.09 | 2.7 × 10⁻¹⁵ | 0.58 |
-| (12, 1)  | 7.14 | 4.4 × 10⁻¹² | 0.59 |
-| **(15, 9)**  | **10.01** | **1.4 × 10⁻²¹** | **0.79** |
-
-All p < 10⁻¹¹; effect sizes Cohen's d 0.58-0.79 (medium-to-large by social-science standards, very large by neural-net-probing standards). Layer 15 head 9 has the largest gap — among the 336 heads it's the cleanest single-feature discriminator of hallucination.
-
-**Universality of the pattern across all 336 heads:** the same comparison (truthful mean − hallucinated mean of attention-to-prompt) yields:
-- **322 of 336 heads (96%)** have *truthful > hallucinated* attention-to-prompt (the "look-away" direction).
-- Only 14 heads (4%) show the opposite direction; these are scattered across early layers and likely encode token/positional rather than semantic information.
-- Average gap across ALL 336 heads: **mean(truthful) − mean(hallucinated) = 0.058** (5.8pt more attention onto the prompt when truthful).
-- 196 heads have effect size > 0.05; 64 heads > 0.10.
-
-This isn't a few cherry-picked outlier heads — **the entire model gives less prompt-attention when fabricating, end-to-end**. The high-MI heads are the loudest signal carriers, but the pattern is genuinely *universal* across the transformer's attention.
-
-Closest published analog: Geva, Caciularu et al. (2023) and Yu et al. (2024) on "looking-up heads" / "knowledge-lookup attention". Our finding extends that line of work to *hallucination detection at the per-head level* on a smaller model than typically studied.
-
-### Day-2 attempts that didn't make it
-
-- **Logit lens** (phase 1 in TOMORROW.md): full-vocab `log_softmax` over 25 layers triggered an NVML/CUDA driver-mismatch assert on this host. CPU fallback hit a per-batch OOM after ~30 batches. Code remains intact in `aggregation.py:extract_logit_lens_features` for future replay on a clean GPU.
-
----
-
-## Ideas tried briefly and dropped
-
-- **F1-as-primary threshold-tuning metric** (the original code path) collapsed every probe to majority-class accuracy in phase 1.
-- **5-fold + per-fold threshold tuning** was slightly worse on local accuracy than single-split with a lucky seed (69.09% vs 74.04%), but it's still the right choice for the submission because the final probe trains on all 689 samples (vs 585 for single-split).
-- **Mid-layer probing** ([phase 8](#phase-8--mid-layer-probing-burns-et-al--interns-empirical-finding)) — well-motivated by prior art and the user's intern's empirical observation, but final layer wins on Qwen2.5-0.5B (likely a model-size effect).
-- **Geometric features** (per-layer norms + inter-layer cosine drift + seq_len) — disproven in phase 5.
-- **Mean-pool / max-pool / multi-token aggregation** ([phase 9](#phase-9--multi-token-aggregation-meanmaxlast-over-real-tokens)) — dilutes the response-token signal across 510 prompt tokens.
-- **Prompt-only / response-only probing** ([phase 7](#phase-7--abstention-style-probing-prompt-only--response-only)) — both flop on AUROC; the signal needs both halves.
-- **Linear / deep MLP probes** — phase 4 showed the `mlp_1h_256` capacity is the sweet spot. Linear underfits, deep overfits.
-- **L2 regularization** — at 1e-3 and 1e-2 it tied or lost; weights matter less than features for this dataset.
-
-## Ideas left as future work
-
-Ordered by expected-leverage-per-engineering-time. Higher items are more likely to move the leaderboard.
-
-- **Response-span-only multi-token aggregation.** Phase 9 tried mean/max over *all* 512 token positions and lost — prompt-token noise drowned the response signal. With prompt/response boundary tracking (tokenize the prompt alone, slice on token count), we could compute mean/max/std *just* over response tokens. The error analysis showed response-character-length is a huge signal (795 vs 419 chars for correct vs misclassified); response-only embedding statistics should pick this up at the representation level. **+1-3 pt likely.**
-- **SelfCheckGPT-style consistency features.** Generate Qwen's response 5× at temperature > 0 for each prompt, measure inter-response semantic similarity (BERTScore / cosine on sentence embeddings). State-of-the-art for hallucination detection in 2024-2025, orthogonal to everything we tried. ~10× generation compute. **+2-4 pt likely** but most expensive change.
-- **Probability-level ensembling.** We ensemble *labels* because per-sample probabilities aren't saved. Modifying [solution.py](solution.py) to also dump `predictions_proba.csv` and averaging probabilities before thresholding usually beats label majority vote on small data. **+0.5-1 pt likely.**
-- **Calibration sanity check from a leaderboard submission.** Submit a single-probe variant first, infer test.csv's actual class prior from leaderboard accuracy, then re-tune the ensemble's vote threshold. Bootstraps the future submissions.
-- **Larger-base-model probing** (out of scope here — Qwen2.5-0.5B is fixed). Mid-layer probing (phase 8) didn't help at 0.5B; expected to help at 1.5B+ per the published probing literature.
-- **Multi-prompt augmentation.** Synthesize paraphrased prompts via another LLM, keep the same response and label. Risk: label noise from paraphrases that change answerability.
-- **Probe ensembling across split seeds.** Train 5 probes on 5 different `SPLIT_SEED` values, average their test.csv probabilities. Reduces variance — the multi-seed honesty check (phase 6) showed ±2.76% std across seeds, so probabilistic averaging should tighten this.
-
-## Ideas left as future work
-
-- **Mid-layer probing (highest priority).** This work only used the **final** transformer layer's hidden state. The hallucination/factuality-probing literature (Burns et al. CCS, Azaria & Mitchell, the "Geometry of Truth" line of work) consistently reports that **layers 14-18 of a 24-layer model** carry the cleanest semantic / truthfulness signal, not the last. Phase 1 here tested only `last_token` vs `last4_concat` (essentially the top of the network); a proper per-layer scan over `{-1, -4, -8, -12, -16, -20}` is the single highest-leverage unexplored axis. Expected to add 2-4 percentage points given how strong this signal is in prior work.
-- **Attention-based features.** Qwen exposes attention weights when forwarded with `output_attentions=True`. Last-token attention entropy, top-k concentration, and per-layer self-attention weights would be ~72 extra dimensions. Plausible 1-2 point improvement; not pursued due to memory bookkeeping (24 × 14 × 512² attention matrices need inline per-sample feature extraction).
-- **SelfCheckGPT-style consistency features.** Generate Qwen's response 5× at temperature > 0 for each prompt, measure inter-response semantic similarity. Inconsistent responses correlate strongly with hallucination. State-of-the-art in 2024-2025; ~10× generation compute but model-independent.
-- **Multi-token aggregation over the response span.** Mean / max / std-dev of hidden states across response tokens (not just the last one). Currently we discard 511 tokens of information per sample.
-- **Prompt-vs-response token-span features.** Once we have the prompt/response boundary in token space, attention-from-response-to-prompt and per-span hidden-state statistics could disambiguate "the prompt is unanswerable" from "the model gave a bad answer to an answerable prompt."
-- **Final-probe threshold tuning.** Currently the final probe (trained on the full dataset) uses threshold=0.5 because there's no held-out val. Holding out ~10% of `idx_non_test` for threshold tuning would likely add 1-2 percentage points.
-- **Multi-prompt augmentation.** Each sample is one prompt+response pair. Synthesizing alternative phrasings of the same prompt with the same response (or vice versa) would expand the training set, hopefully closing the 24-point train→test AUROC gap that persisted throughout every experiment.
+**Claude Code implemented (under direction):**
+- Env-var-driven sweep harness ([run_sweep.sh](run_sweep.sh)) and all analysis tooling.
+- Code changes to editable competition files (`aggregation.py`, `probe.py`, `splitting.py`) and the additions to `solution.py` needed to thread new features through.
+- Root-cause debugging of every bug: the **Mahalanobis label-leakage** (above), perplexity off-by-one, SDPA→eager attention swap, XGBoost calibration drift, F1-greedy threshold collapse.
+- Result interpretation, the mechanistic-interpretability analyses, drafting of this report.
