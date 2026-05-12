@@ -51,7 +51,12 @@ from aggregation import (
     AGG_LAYER,
     AGG_STRATEGY,
     aggregation_and_feature_extraction,
+    compute_knn_features,
+    compute_lid_features,
+    compute_mahalanobis_features,
     extract_heuristic_features,
+    extract_logit_lens_features,
+    extract_per_head_attention_to_prompt,
     extract_perplexity_features,
 )
 from evaluate import print_summary, run_evaluation, save_predictions, save_results
@@ -68,6 +73,12 @@ USE_GEOMETRIC = os.environ.get("USE_GEOMETRIC", "0") == "1"  # toggle via env va
 USE_ATTENTION = os.environ.get("USE_ATTENTION", "0") == "1"  # if True, model outputs attention weights and we extract attention features
 USE_PERPLEXITY = os.environ.get("USE_PERPLEXITY", "0") == "1"  # if True, extract per-token NLL stats over the response span
 USE_HEURISTIC = os.environ.get("USE_HEURISTIC", "0") == "1"  # if True, append text-based heuristic features (length, hedge-words, etc.)
+USE_LOGIT_LENS = os.environ.get("USE_LOGIT_LENS", "0") == "1"  # if True, project per-layer residuals through LM head and emit prediction-stability features
+LOGIT_LENS_NORM = os.environ.get("LOGIT_LENS_NORM", "1") == "1"  # whether to apply the model's final RMSNorm before the LM head (the "with-norm" lens; more accurate)
+USE_KNN_OOD = os.environ.get("USE_KNN_OOD", "0") == "1"  # if True, append per-sample KNN-OOD distance features (post-extraction)
+USE_MANIFOLD = os.environ.get("USE_MANIFOLD", "0") == "1"  # if True, append LID (TwoNN) + per-class Mahalanobis distance features
+USE_ATTENTION_TO_PROMPT = os.environ.get("USE_ATTENTION_TO_PROMPT", "0") == "1"  # if True (with USE_ATTENTION=1), add per-layer attention-mass-to-prompt features
+USE_PER_HEAD_ATTN = os.environ.get("USE_PER_HEAD_ATTN", "0") == "1"  # if True (with USE_ATTENTION=1), add 336 per-(layer, head) attention-to-prompt features
 # Sweep knob. "prompt_response" (default, fed to Qwen as the original solution did),
 # "prompt_only" (no model response — abstention-style probing), "response_only".
 TEXT_MODE = os.environ.get("TEXT_MODE", "prompt_response")
@@ -183,15 +194,28 @@ if __name__=='__main__':
         tokenizer.pad_token = tokenizer.eos_token
     model.to(device)
 
-    # Precompute per-sample prompt token counts (needed by perplexity features
-    # to identify the response span). Cheap: O(N) short tokenizations.
-    if USE_PERPLEXITY:
+    # Precompute per-sample prompt token counts (needed by perplexity, logit-lens,
+    # attention-to-prompt, AND per-head probing to identify the response span).
+    if USE_PERPLEXITY or USE_LOGIT_LENS or USE_ATTENTION_TO_PROMPT or USE_PER_HEAD_ATTN:
         prompt_token_counts = [
             len(tokenizer.encode(r["prompt"], add_special_tokens=False))
             for _, r in df.iterrows()
         ]
     else:
         prompt_token_counts = [0] * len(all_texts)
+
+    # Cache LM-head weight (cast to fp32 ONCE; ~540MB tensor). NOTE: held on
+    # CPU because this host's NVML/driver mismatch causes the CUDA caching
+    # allocator to assert on log_softmax over the full 151K vocab. CPU is
+    # slower (~1s per sample) but reliable.
+    if USE_LOGIT_LENS:
+        lm_head_weight = model.lm_head.weight.detach().float().cpu().contiguous()
+        # Mirror the final-norm module to CPU so the lens applies it consistently.
+        import copy
+        final_norm_module = copy.deepcopy(model.model.norm).cpu() if LOGIT_LENS_NORM else None
+    else:
+        lm_head_weight = None
+        final_norm_module = None
 
     all_features: list = []
     t0 = time.time()
@@ -230,6 +254,7 @@ if __name__=='__main__':
                 mask[i],
                 attentions=attn[i] if attn is not None else None,
                 use_geometric=USE_GEOMETRIC,
+                prompt_token_count=prompt_token_counts[start + i] if USE_ATTENTION_TO_PROMPT else None,
             ).cpu()
             if USE_PERPLEXITY:
                 ppl_feat = extract_perplexity_features(
@@ -239,6 +264,23 @@ if __name__=='__main__':
                     prompt_token_counts[start + i],
                 ).cpu()
                 feat = torch.cat([feat, ppl_feat], dim=0)
+            if USE_LOGIT_LENS:
+                ll_feat = extract_logit_lens_features(
+                    hidden[i].cpu(),                            # move to CPU for the lens projection
+                    input_ids[i].cpu(),
+                    attention_mask[i].cpu(),
+                    prompt_token_counts[start + i],
+                    lm_head_weight,                              # already on CPU
+                    final_norm_module,
+                )
+                feat = torch.cat([feat, ll_feat], dim=0)
+            if USE_PER_HEAD_ATTN and attn is not None:
+                ph_feat = extract_per_head_attention_to_prompt(
+                    attn[i],
+                    attention_mask[i].cpu(),
+                    prompt_token_counts[start + i],
+                ).cpu()
+                feat = torch.cat([feat, ph_feat], dim=0)
             if USE_HEURISTIC:
                 row = df.iloc[start + i]
                 heur_feat = extract_heuristic_features(row["prompt"], row["response"])
@@ -251,6 +293,21 @@ if __name__=='__main__':
     # Stack into the (N, feature_dim) matrix used by the probe.
     X = np.vstack([f.numpy() for f in all_features])   # shape: (N, feature_dim)
     y = all_labels                                       # shape: (N,)
+
+    # Keep a pre-augmentation copy so X_test's manifold features can be
+    # computed against the same neighbor pool that training saw.
+    X_base_for_knn = X.copy() if (USE_KNN_OOD or USE_MANIFOLD) else None
+
+    if USE_KNN_OOD:
+        knn_train = compute_knn_features(X, leave_one_out=True)
+        X = np.hstack([X, knn_train])
+        print(f"KNN-OOD: appended {knn_train.shape[1]} features (train, LOO)")
+
+    if USE_MANIFOLD:
+        lid_train = compute_lid_features(X_base_for_knn, leave_one_out=True)
+        mahal_train = compute_mahalanobis_features(X_base_for_knn, y, X_base_for_knn)
+        X = np.hstack([X, lid_train, mahal_train])
+        print(f"Manifold: appended LID ({lid_train.shape[1]}) + Mahalanobis ({mahal_train.shape[1]}) features (train)")
 
     print(f"Feature matrix : {X.shape}  (feature_dim = {X.shape[1]})")
     print(f"Geometric feats: {USE_GEOMETRIC}")
@@ -324,7 +381,7 @@ if __name__=='__main__':
     # ── Extract features for test set (same loop as Section 4) ───────────────
     test_features: list = []
 
-    if USE_PERPLEXITY:
+    if USE_PERPLEXITY or USE_LOGIT_LENS or USE_ATTENTION_TO_PROMPT or USE_PER_HEAD_ATTN:
         test_prompt_token_counts = [
             len(tokenizer.encode(r["prompt"], add_special_tokens=False))
             for _, r in df_test.iterrows()
@@ -364,6 +421,7 @@ if __name__=='__main__':
                 mask[i],
                 attentions=attn[i] if attn is not None else None,
                 use_geometric=USE_GEOMETRIC,
+                prompt_token_count=test_prompt_token_counts[start + i] if USE_ATTENTION_TO_PROMPT else None,
             ).cpu()
             if USE_PERPLEXITY:
                 ppl_feat = extract_perplexity_features(
@@ -373,6 +431,23 @@ if __name__=='__main__':
                     test_prompt_token_counts[start + i],
                 ).cpu()
                 feat = torch.cat([feat, ppl_feat], dim=0)
+            if USE_LOGIT_LENS:
+                ll_feat = extract_logit_lens_features(
+                    hidden[i].cpu(),
+                    input_ids[i].cpu(),
+                    attention_mask[i].cpu(),
+                    test_prompt_token_counts[start + i],
+                    lm_head_weight,
+                    final_norm_module,
+                )
+                feat = torch.cat([feat, ll_feat], dim=0)
+            if USE_PER_HEAD_ATTN and attn is not None:
+                ph_feat = extract_per_head_attention_to_prompt(
+                    attn[i],
+                    attention_mask[i].cpu(),
+                    test_prompt_token_counts[start + i],
+                ).cpu()
+                feat = torch.cat([feat, ph_feat], dim=0)
             if USE_HEURISTIC:
                 row = df_test.iloc[start + i]
                 heur_feat = extract_heuristic_features(row["prompt"], row["response"])
@@ -380,6 +455,19 @@ if __name__=='__main__':
             test_features.append(feat)
 
     X_test = np.vstack([f.numpy() for f in test_features])  # (n_test, feature_dim)
+    # Keep pre-augmentation X_test as the query input for KNN/manifold lookups
+    # (these query against the pre-augmentation X_base_for_knn).
+    X_test_base = X_test.copy() if (USE_KNN_OOD or USE_MANIFOLD) else None
+
+    if USE_KNN_OOD:
+        knn_test = compute_knn_features(X_base_for_knn, X_query=X_test_base, leave_one_out=False)
+        X_test = np.hstack([X_test, knn_test])
+        print(f"KNN-OOD: appended {knn_test.shape[1]} features (test, against training pool)")
+    if USE_MANIFOLD:
+        lid_test = compute_lid_features(X_base_for_knn, X_query=X_test_base, leave_one_out=False)
+        mahal_test = compute_mahalanobis_features(X_base_for_knn, y, X_test_base)
+        X_test = np.hstack([X_test, lid_test, mahal_test])
+        print(f"Manifold: appended LID ({lid_test.shape[1]}) + Mahalanobis ({mahal_test.shape[1]}) features (test)")
     test_extract_time = time.time() - t_test0
     wandb_utils.log({"test/extract_time_s": test_extract_time})
 

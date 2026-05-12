@@ -1,0 +1,113 @@
+/home/tterhovhanni/Desktop/smiles/.venv/lib/python3.12/site-packages/torch/cuda/__init__.py:1061: UserWarning: Can't initialize NVML
+  raw_cnt = _raw_device_count_nvml()
+wandb: [wandb.login()] Loaded credentials for https://api.wandb.ai from WANDB_API_KEY.
+wandb: Currently logged in as: tatevik-t (tatevik-th) to https://api.wandb.ai. Use `wandb login --relogin` to force relogin
+wandb: WARNING Using a boolean value for 'reinit' is deprecated. Use 'return_previous' or 'finish_previous' instead.
+wandb: setting up run kwpndsco
+wandb: Tracking run with wandb version 0.26.1
+wandb: Run data is saved locally in /home/tterhovhanni/Desktop/smiles/repo/wandb/run-20260512_110810-kwpndsco
+wandb: Run `wandb offline` to turn off syncing.
+wandb: Syncing run knn-last-token
+wandb: ⭐️ View project at https://wandb.ai/tatevik-th/smiles-2026-hallucination
+wandb: 🚀 View run at https://wandb.ai/tatevik-th/smiles-2026-hallucination/runs/kwpndsco
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+[transformers] The following generation flags are not valid and may be ignored: ['output_hidden_states']. Set `TRANSFORMERS_VERBOSITY=info` for more details.
+Device       : cuda
+Data         : ./data/dataset.csv
+Max length   : 512 tokens
+Geometric feats: False
+Loaded 689 samples  (483 hallucinated / 206 truthful)
+[wandb] loaded credentials from .env
+[wandb] run started: knn-last-token  entity=tatevik-th  (https://wandb.ai/tatevik-th/smiles-2026-hallucination/runs/kwpndsco)
+Columns : ['prompt', 'response', 'label']
+Rows    : 689
+Labels  : {0.0: np.int64(206), 1.0: np.int64(483)}
+
+── prompt (first 500 chars) ──────────────────────────────────
+<|im_start|>system
+You are a helpful assistant.<|im_end|>
+<|im_start|>user
+Given the context, answer the question in a single brief but complete sentence.
+
+This is the most common method of construction procurement and is well established and recognized. In this arrangement, the architect or engineer acts as the project coordinator. His or her role is to design the works, prepare the specifications and produce construction drawings, administer the contract, tender the works, and manage the works
+
+── response (first 300 chars) ───────────────────────────────
+An architect or engineer has a direct relationship with the subcontractor.<|endoftext|>
+
+── label : 1  (hallucinated)
+[Model] Loading 'Qwen/Qwen2.5-0.5B' ...
+Loading weights:   0%|          | 0/290 [00:00<?, ?it/s]Loading weights: 100%|██████████| 290/290 [00:00<00:00, 4304.82it/s]
+Extracting & aggregating:   0%|          | 0/173 [00:00<?, ?batch/s]Extracting & aggregating:   1%|          | 1/173 [00:00<00:50,  3.40batch/s]Extracting & aggregating:   2%|▏         | 3/173 [00:00<00:20,  8.49batch/s]Extracting & aggregating:   3%|▎         | 5/173 [00:00<00:13, 12.05batch/s]Extracting & aggregating:   5%|▍         | 8/173 [00:00<00:10, 16.48batch/s]Extracting & aggregating:   6%|▋         | 11/173 [00:00<00:08, 19.08batch/s]Extracting & aggregating:   8%|▊         | 14/173 [00:00<00:08, 19.44batch/s]Extracting & aggregating:  10%|▉         | 17/173 [00:01<00:07, 20.41batch/s]Extracting & aggregating:  12%|█▏        | 20/173 [00:01<00:07, 20.51batch/s]Extracting & aggregating:  13%|█▎        | 23/173 [00:01<00:07, 18.89batch/s]Extracting & aggregating:  14%|█▍        | 25/173 [00:01<00:08, 18.35batch/s]Extracting & aggregating:  16%|█▌        | 28/173 [00:01<00:07, 19.08batch/s]Extracting & aggregating:  18%|█▊        | 31/173 [00:01<00:06, 21.01batch/s]Extracting & aggregating:  20%|█▉        | 34/173 [00:01<00:06, 21.43batch/s]Extracting & aggregating:  21%|██▏       | 37/173 [00:02<00:06, 21.10batch/s]Extracting & aggregating:  23%|██▎       | 40/173 [00:02<00:06, 20.09batch/s]Extracting & aggregating:  25%|██▍       | 43/173 [00:02<00:06, 21.04batch/s]Extracting & aggregating:  27%|██▋       | 46/173 [00:02<00:05, 21.77batch/s]Extracting & aggregating:  28%|██▊       | 49/173 [00:02<00:05, 21.27batch/s]Extracting & aggregating:  30%|███       | 52/173 [00:02<00:06, 19.32batch/s]Extracting & aggregating:  31%|███       | 54/173 [00:02<00:06, 18.66batch/s]Extracting & aggregating:  32%|███▏      | 56/173 [00:03<00:06, 18.07batch/s]Extracting & aggregating:  34%|███▎      | 58/173 [00:03<00:06, 18.50batch/s]Extracting & aggregating:  35%|███▍      | 60/173 [00:03<00:06, 18.76batch/s]Extracting & aggregating:  36%|███▌      | 62/173 [00:03<00:05, 18.74batch/s]Extracting & aggregating:  38%|███▊      | 65/173 [00:03<00:05, 20.24batch/s]Extracting & aggregating:  39%|███▉      | 68/173 [00:03<00:05, 20.86batch/s]Extracting & aggregating:  41%|████      | 71/173 [00:03<00:04, 21.62batch/s]Extracting & aggregating:  43%|████▎     | 74/173 [00:03<00:04, 21.41batch/s]Extracting & aggregating:  45%|████▍     | 77/173 [00:03<00:04, 22.93batch/s]Extracting & aggregating:  46%|████▌     | 80/173 [00:04<00:04, 23.12batch/s]Extracting & aggregating:  48%|████▊     | 83/173 [00:04<00:03, 23.44batch/s]Extracting & aggregating:  50%|████▉     | 86/173 [00:04<00:03, 24.26batch/s]Extracting & aggregating:  52%|█████▏    | 90/173 [00:04<00:03, 26.75batch/s]Extracting & aggregating:  54%|█████▍    | 93/173 [00:04<00:03, 25.32batch/s]Extracting & aggregating:  55%|█████▌    | 96/173 [00:04<00:02, 26.34batch/s]Extracting & aggregating:  58%|█████▊    | 100/173 [00:04<00:02, 28.52batch/s]Extracting & aggregating:  60%|██████    | 104/173 [00:04<00:02, 29.89batch/s]Extracting & aggregating:  62%|██████▏   | 107/173 [00:05<00:02, 28.46batch/s]Extracting & aggregating:  64%|██████▍   | 111/173 [00:05<00:02, 29.69batch/s]Extracting & aggregating:  66%|██████▌   | 114/173 [00:05<00:02, 27.21batch/s]Extracting & aggregating:  68%|██████▊   | 118/173 [00:05<00:01, 29.39batch/s]Extracting & aggregating:  71%|███████   | 122/173 [00:05<00:01, 30.66batch/s]Extracting & aggregating:  73%|███████▎  | 126/173 [00:05<00:01, 30.66batch/s]Extracting & aggregating:  75%|███████▌  | 130/173 [00:05<00:01, 28.83batch/s]Extracting & aggregating:  77%|███████▋  | 134/173 [00:05<00:01, 29.65batch/s]Extracting & aggregating:  79%|███████▉  | 137/173 [00:06<00:01, 28.32batch/s]Extracting & aggregating:  81%|████████  | 140/173 [00:06<00:01, 26.84batch/s]Extracting & aggregating:  83%|████████▎ | 143/173 [00:06<00:01, 26.60batch/s]Extracting & aggregating:  84%|████████▍ | 146/173 [00:06<00:01, 25.27batch/s]Extracting & aggregating:  87%|████████▋ | 150/173 [00:06<00:00, 27.57batch/s]Extracting & aggregating:  89%|████████▉ | 154/173 [00:06<00:00, 28.06batch/s]Extracting & aggregating:  91%|█████████ | 157/173 [00:06<00:00, 28.01batch/s]Extracting & aggregating:  92%|█████████▏| 160/173 [00:06<00:00, 25.14batch/s]Extracting & aggregating:  94%|█████████▍| 163/173 [00:07<00:00, 22.36batch/s]Extracting & aggregating:  96%|█████████▌| 166/173 [00:07<00:00, 20.67batch/s]Extracting & aggregating:  98%|█████████▊| 169/173 [00:07<00:00, 20.61batch/s]Extracting & aggregating:  99%|█████████▉| 172/173 [00:07<00:00, 20.23batch/s]Extracting & aggregating: 100%|██████████| 173/173 [00:07<00:00, 22.59batch/s]
+Done in 7.7 s  —  689 feature vectors extracted
+KNN-OOD: appended 5 features (train, LOO)
+Feature matrix : (689, 901)  (feature_dim = 901)
+Geometric feats: False
+Splits : 1 fold(s)
+  Fold 1: train=481  val=104  test=104
+
+──────────────────────────────────────────────────
+  Fold 1/1  —  train=481  val=104  test=104
+──────────────────────────────────────────────────
+  Baseline  — Acc: 70.19%  F1: 82.49%
+  Probe train — Acc: 93.97%  F1: 95.87%  AUROC: 99.99%
+  Probe val  — Acc: 70.19%  F1: 80.98%  AUROC: 65.09%
+  Probe test — Acc: 74.04%  F1: 82.35%  AUROC: 74.28%
+
+============================================================
+ Hallucination Detection — Evaluation Summary
+============================================================
+  Checkpoint                           Accuracy      F1   AUROC
+------------------------------------------------------------
+  1. Majority-class baseline             70.19%  82.49%     N/A
+  2. Probe (train split)                 93.97%  95.87%  99.99%
+  3. Probe (val split)                   70.19%  80.98%  65.09%
+  4. Probe (test split)                  74.04%  82.35%  74.28%
+------------------------------------------------------------
+  Feature dim  : 901
+  Total samples: 689
+  Folds        : 1
+  Extract time : 7.7 s
+============================================================
+
+★  Primary metric — Test AUROC: 74.28%
+
+Results saved to 'results.json'
+Test set loaded: 100 samples
+Test extraction & aggregation:   0%|          | 0/25 [00:00<?, ?batch/s]Test extraction & aggregation:  12%|█▏        | 3/25 [00:00<00:00, 26.94batch/s]Test extraction & aggregation:  28%|██▊       | 7/25 [00:00<00:00, 29.73batch/s]Test extraction & aggregation:  40%|████      | 10/25 [00:00<00:00, 23.81batch/s]Test extraction & aggregation:  52%|█████▏    | 13/25 [00:00<00:00, 22.41batch/s]Test extraction & aggregation:  64%|██████▍   | 16/25 [00:00<00:00, 21.56batch/s]Test extraction & aggregation:  76%|███████▌  | 19/25 [00:00<00:00, 23.62batch/s]Test extraction & aggregation:  88%|████████▊ | 22/25 [00:00<00:00, 23.34batch/s]Test extraction & aggregation: 100%|██████████| 25/25 [00:01<00:00, 24.47batch/s]
+wandb: uploading artifact run-kwpndsco-fold_results; updating run metadata; uploading artifact submission
+wandb: uploading artifact submission
+wandb: uploading history steps 205-407, summary, console lines 57-60
+wandb: 
+wandb: Run history:
+wandb:      extract/feature_dim ▁
+wandb:       extract/n_features ▁
+wandb:   extract/sec_per_sample ▁
+wandb:           extract/time_s ▁
+wandb:      final_probe/n_train ▁
+wandb:        final_probe/n_val ▁
+wandb:    final_probe/threshold ▁
+wandb: fold_1/baseline_accuracy ▁
+wandb:       fold_1/baseline_f1 ▁
+wandb:            fold_1/n_test ▁
+wandb:                      +32 ...
+wandb: 
+wandb: Run summary:
+wandb: avg/baseline_accuracy 0.70192
+wandb:       avg/baseline_f1 0.82486
+wandb:     avg/test_accuracy 0.74038
+wandb:        avg/test_auroc 0.74282
+wandb:           avg/test_f1 0.82353
+wandb:    avg/train_accuracy 0.93971
+wandb:       avg/train_auroc 0.99994
+wandb:          avg/train_f1 0.95875
+wandb:      avg/val_accuracy 0.70192
+wandb:         avg/val_auroc 0.65091
+wandb:                   +47 ...
+wandb: 
+wandb: 🚀 View run knn-last-token at: https://wandb.ai/tatevik-th/smiles-2026-hallucination/runs/kwpndsco
+wandb: ⭐️ View project at: https://wandb.ai/tatevik-th/smiles-2026-hallucination
+wandb: Synced 5 W&B file(s), 1 media file(s), 5 artifact file(s) and 0 other file(s)
+wandb: Find logs at: ./wandb/run-20260512_110810-kwpndsco/logs
+KNN-OOD: appended 5 features (test, against training pool)
+Final probe: trained on 526 samples, threshold tuned on 59 (chosen threshold: 0.0003)
+Predictions saved to 'predictions.csv'  (100 samples)

@@ -94,3 +94,25 @@ run 34 "all-features-5fold" "all"          AGG_STRATEGY=last_token   PROBE_ARCH=
 run 35 "xgb-last-token"    "xgboost"       AGG_STRATEGY=last_token   PROBE_ARCH=mlp_1h_256 SPLIT_STRATEGY=single PROBE_FAMILY=xgboost
 run 36 "xgb-last-5fold"    "xgboost,cv"    AGG_STRATEGY=last_token   PROBE_ARCH=mlp_1h_256 SPLIT_STRATEGY=5fold PROBE_FAMILY=xgboost
 run 37 "xgb-all-features-5fold" "xgboost,all,cv" AGG_STRATEGY=last_token PROBE_ARCH=mlp_1h_256 SPLIT_STRATEGY=5fold PROBE_FAMILY=xgboost USE_PERPLEXITY=1 USE_HEURISTIC=1
+# ── Phase 15: logit-lens features (per-layer LM-head projections; "with norm") ──
+run 38 "ll-last-token"     "logit-lens"    AGG_STRATEGY=last_token PROBE_ARCH=mlp_1h_256 SPLIT_STRATEGY=single USE_LOGIT_LENS=1
+run 39 "ll-last-5fold"     "logit-lens,cv" AGG_STRATEGY=last_token PROBE_ARCH=mlp_1h_256 SPLIT_STRATEGY=5fold USE_LOGIT_LENS=1
+run 40 "ll-all-features-5fold" "logit-lens,all,cv" AGG_STRATEGY=last_token PROBE_ARCH=mlp_1h_256 SPLIT_STRATEGY=5fold USE_LOGIT_LENS=1 USE_PERPLEXITY=1 USE_HEURISTIC=1
+run 41 "xgb-ll-all-5fold"  "xgboost,logit-lens,all,cv" AGG_STRATEGY=last_token PROBE_ARCH=mlp_1h_256 SPLIT_STRATEGY=5fold PROBE_FAMILY=xgboost USE_LOGIT_LENS=1 USE_PERPLEXITY=1 USE_HEURISTIC=1
+# ── Phase 13: KNN-OOD distance features (manifold/density signals) ──
+run 42 "knn-last-token"    "knn-ood"       AGG_STRATEGY=last_token PROBE_ARCH=mlp_1h_256 SPLIT_STRATEGY=single USE_KNN_OOD=1
+run 43 "knn-last-5fold"    "knn-ood,cv"    AGG_STRATEGY=last_token PROBE_ARCH=mlp_1h_256 SPLIT_STRATEGY=5fold USE_KNN_OOD=1
+run 44 "knn-all-features-5fold" "knn-ood,all,cv" AGG_STRATEGY=last_token PROBE_ARCH=mlp_1h_256 SPLIT_STRATEGY=5fold USE_KNN_OOD=1 USE_PERPLEXITY=1 USE_HEURISTIC=1
+run 45 "xgb-knn-all-5fold" "xgboost,knn-ood,all,cv" AGG_STRATEGY=last_token PROBE_ARCH=mlp_1h_256 SPLIT_STRATEGY=5fold PROBE_FAMILY=xgboost USE_KNN_OOD=1 USE_PERPLEXITY=1 USE_HEURISTIC=1
+# ── Phase 14+15: manifold features (LID + per-class Mahalanobis) ──
+run 46 "manifold-5fold"    "manifold,cv"   AGG_STRATEGY=last_token PROBE_ARCH=mlp_1h_256 SPLIT_STRATEGY=5fold USE_MANIFOLD=1
+run 47 "xgb-manifold-all-5fold" "xgboost,manifold,all,cv" AGG_STRATEGY=last_token PROBE_ARCH=mlp_1h_256 SPLIT_STRATEGY=5fold PROBE_FAMILY=xgboost USE_MANIFOLD=1 USE_PERPLEXITY=1 USE_HEURISTIC=1
+run 48 "xgb-knn-manifold-all-5fold" "xgboost,knn-ood,manifold,all,cv" AGG_STRATEGY=last_token PROBE_ARCH=mlp_1h_256 SPLIT_STRATEGY=5fold PROBE_FAMILY=xgboost USE_KNN_OOD=1 USE_MANIFOLD=1 USE_PERPLEXITY=1 USE_HEURISTIC=1
+# ── Phase 3: cross-attention from response to prompt span ──
+run 49 "attn2prompt-5fold"     "attention,attn2prompt,cv"      AGG_STRATEGY=last_token PROBE_ARCH=mlp_1h_256 SPLIT_STRATEGY=5fold USE_ATTENTION=1 USE_ATTENTION_TO_PROMPT=1
+run 50 "xgb-attn2prompt-all-5fold" "xgboost,attention,attn2prompt,all,cv" AGG_STRATEGY=last_token PROBE_ARCH=mlp_1h_256 SPLIT_STRATEGY=5fold PROBE_FAMILY=xgboost USE_ATTENTION=1 USE_ATTENTION_TO_PROMPT=1 USE_PERPLEXITY=1 USE_HEURISTIC=1
+run 51 "xgb-manifold-attn2prompt-all-5fold" "xgboost,manifold,attention,attn2prompt,all,cv" AGG_STRATEGY=last_token PROBE_ARCH=mlp_1h_256 SPLIT_STRATEGY=5fold PROBE_FAMILY=xgboost USE_MANIFOLD=1 USE_ATTENTION=1 USE_ATTENTION_TO_PROMPT=1 USE_PERPLEXITY=1 USE_HEURISTIC=1
+# ── Phase 5: per-head attention probing (336 per-(layer, head) features) ──
+run 52 "xgb-perhead-attn-5fold" "xgboost,per-head,attention,cv" AGG_STRATEGY=last_token PROBE_ARCH=mlp_1h_256 SPLIT_STRATEGY=5fold PROBE_FAMILY=xgboost USE_ATTENTION=1 USE_PER_HEAD_ATTN=1
+run 53 "xgb-manifold-perhead-all-5fold" "xgboost,manifold,per-head,attention,all,cv" AGG_STRATEGY=last_token PROBE_ARCH=mlp_1h_256 SPLIT_STRATEGY=5fold PROBE_FAMILY=xgboost USE_MANIFOLD=1 USE_ATTENTION=1 USE_PER_HEAD_ATTN=1 USE_PERPLEXITY=1 USE_HEURISTIC=1
+run 54 "xgb-manifold-perhead-attn2prompt-all-5fold" "xgboost,manifold,per-head,attn2prompt,all,cv" AGG_STRATEGY=last_token PROBE_ARCH=mlp_1h_256 SPLIT_STRATEGY=5fold PROBE_FAMILY=xgboost USE_MANIFOLD=1 USE_ATTENTION=1 USE_ATTENTION_TO_PROMPT=1 USE_PER_HEAD_ATTN=1 USE_PERPLEXITY=1 USE_HEURISTIC=1

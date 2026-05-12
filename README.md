@@ -4,7 +4,7 @@ Detect whether a small language
 model's answer is *hallucinated* (fabricated) or *truthful* using the model's
 own internal representations (hidden states).
 
-> **Applicant: Tatevik Terhovhannisyan.** The full write-up of the final approach, every
+> **Applicant: Tatevik Ter-Hovhannisyan.** The full write-up of the final approach, every
 > phase tried (including failed attempts), and the contribution split between the applicant
 > and the Claude Code assistant is in [SOLUTION.md](SOLUTION.md). The rest of this README
 > documents the unchanged competition scaffolding plus our additions to it.

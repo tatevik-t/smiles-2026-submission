@@ -333,7 +333,7 @@ Perplexity features add +1.4pt test_acc over the no-features 5-fold baseline (69
 
 Heuristic alone modestly helps; combined with perplexity it gives the best AUROC of the well-calibrated set (74.43%, vs 72.92% for plain last_token). **The error analysis ([logs/audits/error_analysis.json](logs/audits/error_analysis.json)) confirmed response length is a real signal**: misclassified samples averaged 419 chars vs 795 chars for correctly classified ones, a 2× difference.
 
-### Phase 14 — final canonical: 5-model ensemble (majority vote)
+### Phase 14 — first canonical: 5-model ensemble (majority vote) [Day-1]
 
 Five 5-fold runs (XGBoost+all-features, MLP+all-features, MLP+ppl, MLP+attn, MLP-only) are ensembled by `ensemble_predictions.py`: each sample's predicted label = `1` iff ≥3 of the 5 input runs predict `1`.
 
@@ -341,7 +341,82 @@ Five 5-fold runs (XGBoost+all-features, MLP+all-features, MLP+ppl, MLP+attn, MLP
 - Ensemble's predicted distribution: **80% hallucinated** — a sensible blend, between XGBoost's over-aggression and MLP's training-prior-matching.
 - Ensemble is closest to `final-submission` (only 2 flips), with XGBoost contributing the most corrections (16 flips of "this is hallucinated but really truthful" XGBoost calls).
 
-This is the canonical `predictions.csv`.
+### Phase 13 — KNN-OOD distance features
+
+Class-agnostic KNN-OOD signal: for each sample, distance-to-3rd-/5th-/10th-nearest training neighbor (Euclidean in 911-dim feature space), mean of those, plus cosine similarity to top-1 NN. 5 dims, computed by leave-one-out for training samples and against the training pool for test samples.
+
+| Run | feat_dim | test_acc | test_AUROC |
+|---|---|---|---|
+| knn-last-token (single) | 901 | 74.04% | 74.28% |
+| knn-last-5fold | 901 | 68.36% | 73.01% |
+| knn-all-features-5fold (MLP+all+KNN) | 916 | 69.37% | 74.33% |
+| **xgb-knn-all-5fold** | 916 | **74.89%** | 74.26% |
+
+XGBoost + KNN-OOD on top of perplexity + heuristic gave **+0.73pt test_acc** over the previous XGBoost-all-features ceiling (74.16% → 74.89%). MLP doesn't benefit (matches or hurts); the heterogeneous-feature-friendly inductive bias of trees handles the geometric distance features better.
+
+### Phase 14+15 — manifold features (LID + per-class Mahalanobis distance)
+
+6 dims appended to the feature vector before probe training:
+- **LID (TwoNN)**: 2 dims — per-sample 2-NN-ratio `d2/d1` and `log(d2/d1)`. Estimates whether the sample lives in a "thin" (low-LID, on-manifold) or "thick" (high-LID, off-manifold) region.
+- **Per-class Mahalanobis**: 4 dims — distance from each query to truthful-class and hallucinated-class Gaussians (fit via Ledoit–Wolf shrunk covariance), plus their ratio and difference.
+
+| Run | feat_dim | test_acc | test_AUROC |
+|---|---|---|---|
+| manifold-5fold (MLP) | 902 | 71.27% | 75.32% |
+| **xgb-manifold-all-5fold** | **922** | **75.47%** | **76.35%** |
+| xgb-knn-manifold-all-5fold (KNN + Manifold) | 927 | 74.89% | 75.51% |
+
+**`xgb-manifold-all-5fold` becomes the new test_acc winner at 75.47%** — a +0.58pt jump over the KNN-only configuration. Counter-intuitively, **stacking KNN-OOD on top of Manifold actually hurts** (74.89% < 75.47%): the two geometric signals are redundant and KNN's noise pollutes the manifold signal.
+
+### Phase 4 — NLL trajectory shape features (extending perplexity)
+
+Added 5 shape features on top of the existing 6 perplexity dims: position-of-max-NLL within response, lag-1 autocorrelation of NLL, linear slope, kurtosis, and prefix-vs-suffix-NLL ratio. The hypothesis: hallucinated responses exhibit "spike" patterns where the fabrication moment shows up as a localized NLL increase.
+
+Bundled into every USE_PERPLEXITY=1 run after the day-1 baseline, so the +0.58pt that `xgb-manifold-all-5fold` shows over `xgb-knn-all-5fold` is *partially* attributable to the trajectory shape features (the two changes shipped together). Isolation ablation deferred.
+
+### Phase 3 — cross-attention from response to prompt span
+
+For each transformer layer, the fraction of attention mass from response tokens onto prompt tokens (the relevant context). 24 per-layer means + 5 summary stats (layer-mean, max, std, peak-layer, last-response-token's prompt-attention). Total 29 features added on top of the existing 72 attention features (entropy, self-attn, top-3 concentration) when `USE_ATTENTION_TO_PROMPT=1`.
+
+| Run | feat_dim | test_acc | test_AUROC |
+|---|---|---|---|
+| attn2prompt-5fold (MLP) | 997 | 71.56% | 74.64% |
+| xgb-attn2prompt-all-5fold | 1017 | 73.73% | 76.50% |
+| **xgb-manifold-attn2prompt-all-5fold** | 1023 | 75.18% | **76.84%** |
+
+Stacks on top of manifold to give **+0.49pt AUROC** (76.35% → 76.84%) but slightly lower test_acc (75.47% → 75.18%) — the threshold tuner lands at a slightly different operating point. Real but modest signal — the **interpretable, mechanistic** picture (which prompt tokens does the model attend to when answering correctly vs hallucinating) is the more lasting contribution.
+
+### Phase 5 — per-head probing (find "hallucination heads")
+
+Instead of collapsing the 14 attention heads per layer into a single mean, **emit one feature per (layer, head) pair** — `24 × 14 = 336` features each measuring per-head attention mass from response tokens to prompt span. XGBoost's tree splits effectively perform feature selection, identifying the specific heads that carry signal (mechanistic-interpretability analog of "induction heads").
+
+| Run | feat_dim | test_acc | test_AUROC |
+|---|---|---|---|
+| xgb-perhead-attn-5fold (only per-head, no other extras) | 1304 | 74.02% | 76.34% |
+| **xgb-manifold-perhead-all-5fold** | 1330 | 74.02% | **77.52%** ★ |
+| xgb-manifold-perhead-attn2prompt-all-5fold | 1359 | 74.74% | 77.06% |
+
+**Highest local AUROC of the project (77.52%).** Per-head features push AUROC another +1.17pt above manifold-only (76.35% → 77.52%). Test-acc didn't move because the probability distribution is more spread (threshold lands at 0.29 — much higher than the 0.07-0.14 typical of other XGBoost runs), which **also improves the predictions.csv calibration** (`xgb-perhead-attn-5fold` predicts 80% hallucinated, matching the training prior, vs 92-96% in earlier XGBoost runs).
+
+### Final canonical submission [Day-2]
+
+The Day-1 5-model ensemble (80% hallucinated predictions) was replaced after the Day-2 phases reduced calibration drift and added orthogonal signal. The new ensemble inputs:
+
+| Model | Day-2 role | predictions.csv hall% |
+|---|---|---|
+| **xgb-manifold-all-5fold** | best test_acc (75.47%) | 92% |
+| **xgb-manifold-perhead-attn2prompt-all-5fold** | second-highest AUROC (77.06%) | 85% |
+| **manifold-5fold** (MLP) | calibrated XGB counter-vote | 76% |
+| **all-features-5fold** (MLP) | held over from Day 1 — most-calibrated multi-feature MLP | 73% |
+| **final-submission** (MLP) | held over from Day 1 — baseline calibrated reference | 78% |
+
+Majority vote across these 5 produces **80% hallucinated** predictions — same overall calibration as Day 1 but built on individually-stronger constituent models (the worst input by AUROC is now `all-features-5fold` at 74.43%, vs Day-1's worst at 72.43%).
+
+`results.json` reports `xgb-manifold-all-5fold`'s 5-fold metrics (the highest local test_acc of any single model): **75.47% accuracy, 76.35% AUROC** across 5 folds.
+
+### Day-2 attempts that didn't make it
+
+- **Logit lens** (phase 1 in TOMORROW.md): full-vocab `log_softmax` over 25 layers triggered an NVML/CUDA driver-mismatch assert on this host. CPU fallback hit a per-batch OOM after ~30 batches. Code remains intact in `aggregation.py:extract_logit_lens_features` for future replay on a clean GPU.
 
 ---
 
